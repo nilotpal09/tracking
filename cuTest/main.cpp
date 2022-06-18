@@ -1,86 +1,79 @@
+#include <iostream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <assert.h>
+#include <vector>
+#include <random>
+
 
 #define N_TRIPLET 1000
-
-
-// The plan so far...
-
-// module_triplets is a 1D arrays
-// ((1,2,3), (6,7,8)) will be represented as (1,2,3,6,7,8)
-
-// A hit is an array of three numbers (floats)
-// (x,y,z)
-
-// hits in module will be stored in a 1D array (flattened hit x,y,zs)
-// similar to module_triplets
-
-// all the hits (in all the modules) will be in an object of some class
-// Need to develop the structure of the class as we progress
-
-
-
-
-class InputHits {
-
-
-
-    // do the selection and stuff here
-    // it's easier this way, since everything is already here
-    // and then decorate the final result (yet to figure out the format)
-
-
-    // makes edges for one module triplet
-    // can call it inside the cuda kernal later (parallelizable)
-    void make_edges(){
-
-    }
-
-
-}
-
+#define N_MODULES 100
+#define N_MAX_HITS 10
 
 
 // runs on module triplets
 // will become the kernal later
-void fun_mTriplet(float *t_arr, float *a, float *b, int n) {
-    
+void fun_mTriplet(
+    std::vector<unsigned long int> const &flatten_triplets, 
+    std::vector<std::vector<float> > const &input_hits, 
+    unsigned long int n) {
+
     for(int i = 0; i < n; i++){
 
-        int module1 = t_arr[i*3];
-        int module2 = t_arr[i*3 + 1];
-        int module3 = t_arr[i*3 + 2];
+        unsigned long int module1_idx = flatten_triplets[i*3];
+        unsigned long int module2_idx = flatten_triplets[i*3 + 1];
+        unsigned long int module3_idx = flatten_triplets[i*3 + 2];
 
-
-
-
+        int sum = input_hits.at(module1_idx).size() + input_hits.at(module2_idx).size() + input_hits.at(module3_idx).size();
     }
 }
 
 
-
-
 int main(){
-    float *a, *b, *out; 
 
-    // Allocate memory for module triple array
-    int *triplet_array = (int*)malloc(sizeof(int) * 3*N_TRIPLET);
-
-    // Initializing the triplet array
-    for(int i = 0; i < 3*N_TRIPLET; i++){
-        a[i] = rand() % 100;
-
-    // Allocate memory for result
+    // random seeding (module triple indices)
+    std::random_device rd1;
+    std::mt19937 rng1(rd1());
+    std::uniform_int_distribution<unsigned long int> uni1(0,N_MODULES-1);
 
 
-    // create the inputHits object
-    inputHits = InputHits()
+    // random seeding (num hits)
+    std::random_device rd2;
+    std::mt19937 rng2(rd2());
+    std::uniform_int_distribution<int> uni2(0,N_MAX_HITS);
 
 
-    fun_mTriplet(triplet_array, inputHits, N_TRIPLET)
+    // random seeding (hit values)
+    std::random_device rd3;
+    std::mt19937 rng3(rd3());
+    std::uniform_real_distribution<float> uni3(-5,5);
 
+
+    // contains only the module indices of the triplets (flatten)
+    std::vector<unsigned long int> flatten_triplets;
+    for (unsigned long int i=0; i<3*N_TRIPLET; i++){
+        unsigned long int random_integer = uni1(rng1);
+        flatten_triplets.push_back(random_integer);
+    }
+
+
+    // contains the actual data (hits on each module)
+    std::vector<std::vector<float> > input_hits;
+    for (unsigned long int i=0; i<N_MODULES; i++){
+
+        int num_hits = uni2(rng2);
+        std::vector<float> hit_vector;
+
+        for (int j=0; j<num_hits; j++){
+            float random_float = uni3(rng3);
+            hit_vector.push_back(random_float);
+        }
+
+        input_hits.push_back(hit_vector);
+    }
+
+    fun_mTriplet(flatten_triplets, input_hits, N_TRIPLET);
 
     printf("PASSED\n");
 }
