@@ -11,7 +11,7 @@
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 
-#define N_MAX_HITS 100
+#define N_MAX_HITS 10
 
 
 
@@ -103,6 +103,8 @@ __global__ void kernel_make_edges(
 				for (unsigned long int l=0; l<pair_23_count; l++){
 					
 					// some more selections here
+					// need to store the hits in these 3 modules temporarily
+					// or some more indexing...
 
 					// edges in pair_12 (flipped, annoying)
 					unsigned long int edge_ind_12 = (n_hits_m1 * pair_12[k*2] + pair_12[k*2+1]) + offset_d1;
