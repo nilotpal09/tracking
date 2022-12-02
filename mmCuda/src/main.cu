@@ -1,19 +1,31 @@
 #include <iostream>
+#include <fstream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <assert.h>
 #include <vector>
-#include <map>
-#include <set>
-#include <tuple>
-#include <random>
+
+// thrust
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 
+#include "../include/utility.h"
 #include "../include/cuda_kernels.h"
 
-#define N_MAX_HITS 10
+
+
+__global__ void kernel_tmp(
+    unsigned int *inp,
+    unsigned int offset
+    ) {
+
+    unsigned int tid = offset + blockDim.x * blockIdx.x + threadIdx.x;
+
+    inp[tid] = tid;
+}
+
+
 
 
 
@@ -22,149 +34,43 @@ int main(int argc, char *argv[]){
     // argc, argv
     //----------------------
 
-    unsigned long int N_TRIPLETS, N_MODULES;
-    int grid_size, block_size;
+    unsigned int grid_size, block_size;
 
-    if (argc != 5){
-        std::cout << "Error! Requires 4 args - N_TRIPLETS, N_MODULES, grid_size, block_size" << std::endl;
+    if (argc != 3){
+        std::cout << "Error! Requires 2 args - grid_size, block_size" << std::endl;
         return 0;
     } else {
-        N_TRIPLETS = atoi(argv[1]);
-        N_MODULES  = atoi(argv[2]);
-        grid_size  = atoi(argv[3]);
-        block_size = atoi(argv[4]);
+        grid_size  = atoi(argv[1]);
+        block_size = atoi(argv[2]);
 
-        std::cout << "Inputs -\n" << "N_TRIPLETS: " << N_TRIPLETS << ", N_MODULES: " << N_MODULES 
-            << ", grid_size: " << grid_size << ", block_size: " << block_size << std::endl << std::endl;
+        std::cout << "Inputs -\n" 
+            << "grid_size: " << grid_size << ", block_size: " << block_size << std::endl << std::endl;
     }
 
 
 
-    // Seeding
-    //----------------------
 
-    // random seeding (module triple indices)
-    std::random_device rd1;
-    std::mt19937 rng1(rd1());
-    std::uniform_int_distribution<unsigned long int> uni1(0,N_MODULES-1);
+    // parse the module map
+    //-------------------------------
 
-    // random seeding (num hits)
-    std::random_device rd2;
-    std::mt19937 rng2(rd2());
-    std::uniform_int_distribution<int> uni2(0,N_MAX_HITS);
+    std::string mm_path{"/storage/agrp/nilotpal/tracking/transformed_data/module_map/df_MMTriplet_3hits_ptCut1GeV_woutSec_woutOC_90kevents_woutElectron.csv"};
+    ModuleMap mm = ModuleMap(mm_path);
+    mm.print_summary();
+    mm.cuda();
 
-    // random seeding (hit values)
-    std::random_device rd3;
-    std::mt19937 rng3(rd3());
-    std::uniform_real_distribution<float> uni3(-5,5);
+    unsigned int n_triplets = mm.num_triplets;
+    unsigned int n_doublets = mm.num_doublets;
 
 
 
-    // Preprocessed data
-    //----------------------
 
-    std::set<std::tuple<unsigned long int, unsigned long int, unsigned long int>> triplets;
-    std::vector<unsigned long int> flatten_triplets;
+    // parse an event
+    //-------------------------------
 
-    std::map<std::tuple<unsigned long int, unsigned long int>, unsigned long int> doublets;
-    std::vector<unsigned long int> flatten_doublets;
+    std::string event_path{"/storage/agrp/nilotpal/tracking/transformed_data/events/event000000001-truth.csv"};
+    EventData event = EventData(event_path, 18960);
+    event.print_summary();
 
-    std::vector<unsigned long int> flatten_t2d_links;
-    unsigned long int t2d_link_count = 0;
-
-    for (unsigned long int i=0; i<N_TRIPLETS; i++){
-
-        unsigned long int a = uni1(rng1);
-        unsigned long int b = uni1(rng1);
-        unsigned long int c = uni1(rng1);
-
-        auto tmp_triplet  = std::make_tuple(a, b, c);
-        auto tmp_doublet1 = std::make_tuple(a, b);
-        auto tmp_doublet2 = std::make_tuple(b, c);
-
-        // unique triplet
-        if (triplets.find(tmp_triplet) == triplets.end()){
-            triplets.insert(tmp_triplet);
-            flatten_triplets.push_back(a);
-            flatten_triplets.push_back(b);
-            flatten_triplets.push_back(c);
-
-            // the doublet not exist already
-            if (doublets.find(tmp_doublet1) == doublets.end()){
-                doublets.insert({tmp_doublet1, t2d_link_count});
-                flatten_doublets.push_back(a);
-                flatten_doublets.push_back(b);
-                flatten_t2d_links.push_back(t2d_link_count);
-                t2d_link_count++;
-            } else {
-                flatten_t2d_links.push_back(doublets[tmp_doublet1]);
-            }
-
-            // the doublet not exist already
-            if (doublets.find(tmp_doublet2) == doublets.end()){
-                doublets.insert({tmp_doublet2, t2d_link_count});
-                flatten_doublets.push_back(b);
-                flatten_doublets.push_back(c);
-                flatten_t2d_links.push_back(t2d_link_count);
-                t2d_link_count++;
-            } else {
-                flatten_t2d_links.push_back(doublets[tmp_doublet2]);
-            }
-        }
-    }
-
-    unsigned long int n_triplets = flatten_triplets.size() / 3;
-    unsigned long int n_doublets = flatten_doublets.size() / 2;
-    std::cout << "n_triplets: " << n_triplets << ", n_doublets: " << n_doublets << std::endl;
-
-
-
-    // Event data (input hits)
-    //----------------------
-
-    std::vector<std::vector<float> > input_hits;
-    for (unsigned long int i=0; i<N_MODULES; i++){
-
-        int num_hits = uni2(rng2);
-        std::vector<float> hit_vector;
-
-        for (int j=0; j<3*num_hits; j++){
-            float random_float = uni3(rng3);
-            hit_vector.push_back(random_float);
-        }
-
-        input_hits.push_back(hit_vector);
-    }
-
-
-
-    // flattening input_hits
-    //----------------------
-
-    std::vector<float> input_hits_flatten;
-    std::vector<unsigned long int> input_hits_chunk_idx;
-    unsigned long int hit_count = 0;
-
-    for (unsigned long int i=0; i<input_hits.size(); i++){
-
-        input_hits_chunk_idx.push_back(hit_count);
-        hit_count += input_hits.at(i).size() / 3;
-
-        for (unsigned int j=0; j<input_hits.at(i).size(); j++){
-            input_hits_flatten.push_back(input_hits.at(i).at(j));
-        }
-    }
-
-    input_hits_chunk_idx.push_back(hit_count);
-
-
-
-    // stdout
-    //----------------------
-
-    printf("flatten sizes -\n");
-    printf("triplets: %d, input_hits: %d, chunk_idx: %d\n\n", 
-        flatten_triplets.size(), input_hits_flatten.size(), input_hits_chunk_idx.size());
 
 
 
@@ -172,47 +78,120 @@ int main(int argc, char *argv[]){
     //----------------------
     
     // the last guy will be random/0 and will be ignored during exclusive_scan
-    std::vector<unsigned long int> edge_count(n_doublets + 1);
+    std::vector<unsigned int> edge_count(n_doublets + 1);
 
-    thrust::device_vector<unsigned long int> td_flatten_doublets     = flatten_doublets;
-    thrust::device_vector<unsigned long int> td_flatten_triplets     = flatten_triplets;
-    thrust::device_vector<unsigned long int> td_flatten_t2d_links    = flatten_t2d_links;
-    thrust::device_vector<float> td_input_hits                       = input_hits_flatten;
-    thrust::device_vector<unsigned long int> td_input_hits_chunk_idx = input_hits_chunk_idx;
-    thrust::device_vector<unsigned long int> td_edge_count           = edge_count;
+    thrust::device_vector<float> td_input_hits                  = event.input_hits_flatten;
+    thrust::device_vector<unsigned int> td_input_hits_chunk_idx = event.input_hits_chunk_idx;
+    thrust::device_vector<unsigned int> td_edge_count      = edge_count;
 
-    unsigned long int* d_flatten_doublets     = thrust::raw_pointer_cast(td_flatten_doublets.data());
-    unsigned long int* d_flatten_triplets     = thrust::raw_pointer_cast(td_flatten_triplets.data());
-    unsigned long int* d_flatten_t2d_links    = thrust::raw_pointer_cast(td_flatten_t2d_links.data());
-    float* d_input_hits                       = thrust::raw_pointer_cast(td_input_hits.data());
-    unsigned long int* d_input_hits_chunk_idx = thrust::raw_pointer_cast(td_input_hits_chunk_idx.data());
-    unsigned long int* d_edge_count           = thrust::raw_pointer_cast(td_edge_count.data());
+    float* d_input_hits                  = thrust::raw_pointer_cast(td_input_hits.data());
+    unsigned int* d_input_hits_chunk_idx = thrust::raw_pointer_cast(td_input_hits_chunk_idx.data());
+    unsigned int* d_edge_count      = thrust::raw_pointer_cast(td_edge_count.data());
 
     launch_kernel_edge_count(
-        d_flatten_doublets, d_input_hits_chunk_idx, d_edge_count, n_doublets,
+        mm.d_flatten_doublets, d_input_hits_chunk_idx, d_edge_count, n_doublets,
         grid_size, block_size);
 
-    // d_edge_count is a cumusum
+    // d_edge_count is a cumusum [0, ..., total_doublet_hit]
     thrust::exclusive_scan(thrust::device, d_edge_count, d_edge_count+n_doublets+1, d_edge_count, 0);
-    unsigned long int n_edges = td_edge_count[n_doublets];
+    unsigned int n_edges = td_edge_count[n_doublets];
     std::cout << "num edges (respecting the doublet-map only): " << n_edges << std::endl;
+
+
+
+
+    // counting iters in triplets
+    //----------------------
+
+    std::vector<unsigned int> iter_count(n_triplets);
+    thrust::device_vector<unsigned int> td_iter_count = iter_count;
+    unsigned int* d_iter_count = thrust::raw_pointer_cast(td_iter_count.data());
+
+    launch_kernel_triplet_iter_count(
+        mm.d_flatten_triplets, d_input_hits_chunk_idx, d_iter_count, n_triplets,
+        grid_size, block_size);
+
 
 
 
     // filling the edges (src & dst)
     //----------------------
 
-    thrust::device_vector<unsigned long int> td_src(n_edges);
-    thrust::device_vector<unsigned long int> td_dst(n_edges);
+    thrust::device_vector<unsigned int> td_src(n_edges);
+    thrust::device_vector<unsigned int> td_dst(n_edges);
 
-    unsigned long int* d_src = thrust::raw_pointer_cast(td_src.data());
-    unsigned long int* d_dst = thrust::raw_pointer_cast(td_dst.data());
+    unsigned int* d_src = thrust::raw_pointer_cast(td_src.data());
+    unsigned int* d_dst = thrust::raw_pointer_cast(td_dst.data());
 
-    launch_kernel_make_edges(
-        d_flatten_triplets, d_flatten_t2d_links, d_edge_count, d_input_hits, d_input_hits_chunk_idx, d_src, d_dst, n_triplets,
-        grid_size, block_size);
+
+    // // without stream (inefficient)
+    // launch_kernel_make_edges(
+    //     mm.d_flatten_triplets, mm.d_flatten_t2d_links, d_edge_count, d_input_hits, d_input_hits_chunk_idx, d_src, d_dst, n_triplets,
+    //     grid_size, block_size);
+
+
+
+    // with stream
+    unsigned int n_stream_max = 100000;
+
+    cudaStream_t stream[n_stream_max];
+    unsigned int shared_mem_size = 0;
+    unsigned int max_grid_size  = 1000;
+    unsigned int max_block_size = 1000;
+
+    unsigned long int offset = 0; // needed for defining the thread_id (ONLY)
+    int stream_i = 0;
+
+
+    for (int i=0; i<n_stream_max; i++){
+
+        if (td_iter_count[i] == 0){
+            continue;
+        }
+
+        cudaStreamCreate(&stream[i]);
+
+        grid_size  = std::min(max_grid_size, (unsigned int)td_iter_count[i]);
+        if (td_iter_count[i] % grid_size){
+            block_size = std::min((unsigned int)td_iter_count[i]/grid_size, max_block_size);
+        } else {
+            block_size = std::min((unsigned int)td_iter_count[i]/grid_size + 1, max_block_size);            
+        }
+
+        launch_kernel_make_edges(
+            mm.d_flatten_triplets, mm.d_flatten_t2d_links, d_edge_count, d_input_hits, d_input_hits_chunk_idx, d_src, d_dst, i, offset,
+            grid_size, block_size, shared_mem_size, stream[stream_i]);
+        
+        offset += (unsigned long int)td_iter_count[i];
+        stream_i++;
+
+        // break;
+    }
+
+    std::cout << "# streams:" << stream_i << std::endl;
+
+    // for (int i=0; i<stream_i; i++){
+    //     cudaStreamDestroy(stream[i]);
+    // }
 
     printf("PASSED\n");
 }
+
+
+
+
+
+
+
+
+
+    // // write them to a file
+    // std::ofstream myfile ("/srv01/agrp/nilotpal/projects/tracking/mmCuda/run/triplet_iter_count_event1.txt");
+    // if (myfile.is_open()) {
+    //     for (unsigned int i=0; i<n_triplets; i++){
+    //         myfile << td_iter_count[i] << std::endl;
+    //     }        
+    //     myfile.close();
+    // }
 
 
