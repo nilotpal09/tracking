@@ -3,6 +3,8 @@
 
 #include "../include/datatypes.cuh"
 
+__global__ void tid();
+
 __host__ unsigned* PrefixSum(unsigned* arr, unsigned size);
 
 __device__ bool doublet_selection(Hit hit_a, Hit hit_b);

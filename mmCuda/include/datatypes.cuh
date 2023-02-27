@@ -5,8 +5,8 @@
 
 #include <iostream>
 #include <fstream>
-//#include <stdio.h>
-//#include <stdlib.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <vector>
 #include <map>
 #include <set>
@@ -54,52 +54,38 @@ class ModuleMap{
 
         unsigned num_triplets() { return h_mod_triplets.size() / 3; }
 
-        unsigned* doublets() { return mod_pairs; }
+        unsigned* doublets() { return static_cast<unsigned*>(h_mod_pairs.data()); }
 
-        unsigned* offsets() { return PrefixSum(static_cast<unsigned*>(h_mod_pairs_offsets.data()), h_mod_pairs.size()); }
+        unsigned* offsets() { return static_cast<unsigned*>(h_mod_pairs_offsets.data()); }
 
         unsigned len_doublets() { return h_mod_pairs.size(); }
     
     public:
 
         // constructor
-        ModuleMap(std::string mm_path_arg){
+        ModuleMap(std::string mm_path_arg, std::string mm_pairs_path){
+            unsigned n_mod = 18359; // Counted from processing file
+            unsigned n_mod_pairs = 509461;
+            unsigned n_mod_triplets = 1242265;
+
+            // Reserve a bit of memory
+            h_mod_pairs_offsets.resize(n_mod);
+            h_mod_ind.reserve(n_mod_pairs);
+            h_mod_pairs.reserve(n_mod_pairs);
+            h_mod_triplets.reserve(n_mod_triplets * 3);
 
             mm_path = mm_path_arg;
-
-            // read the file and make the flatten triplets
-            std::ifstream tmp_file (mm_path);
-
-            unsigned max = std::count(std::istreambuf_iterator<char>(tmp_file), 
-                                      std::istreambuf_iterator<char>(), '\n');
-
             std::ifstream mm_file (mm_path);
             std::string mm_line;
             std::string delim = " ";
 
-            // Check if module pair exists
-            // Can probably be optimized if needed
-            auto is_doublet_duplicate = [&](unsigned a, unsigned b) {
-                for (unsigned i = 0; i < h_mod_ind.size(); i++) {
-                    if (a == h_mod_ind[i]) {
-                        if (b == h_mod_pairs[i]) {
-                            return true;
-                        }
-                    }
-                }
-                return false;
-            };
-
-            // Reserve a bit of memory
-            h_mod_ind.reserve(30000000); // Inital guess
-            h_mod_pairs.reserve(30000000);
-
-            unsigned n_modules = 18359; // Counted this from file
-            h_mod_pairs_offsets.resize(n_modules);
-            h_mod_triplets.reserve(max * 3);
             std::vector<unsigned int> m_ids;
             m_ids.resize(3);
             num_doublets = 0;
+
+            /*********************************
+            / Module triplets
+            *********************************/
             if (mm_file.is_open()){
                 while (getline(mm_file, mm_line)){
 
@@ -118,33 +104,76 @@ class ModuleMap{
                     h_mod_triplets.insert(h_mod_triplets.end(),
                                           static_cast<unsigned*>(m_ids.data()),
                                           static_cast<unsigned*>(m_ids.data()) + 3);
-            
-                    // Insert doublets
-                    // Check first pair
-                    if (!is_doublet_duplicate(m_ids.at(0), m_ids.at(1))) {
-                        h_mod_ind.push_back(m_ids.at(0));
-                        h_mod_pairs.push_back(m_ids.at(1));
-                        h_mod_pairs_offsets[m_ids.at(0)] += 1;
-                        num_doublets++;
-                    }
-                    // Check second pair
-                    if (!is_doublet_duplicate(m_ids.at(1), m_ids.at(2))) {
-                        h_mod_ind.push_back(m_ids.at(1));
-                        h_mod_pairs.push_back(m_ids.at(2));
-                        h_mod_pairs_offsets[m_ids.at(1)] += 1;
-                        num_doublets++;
-                    }
+        
                 }
                 mm_file.close();
             }
             h_mod_triplets.resize(h_mod_triplets.size());
-            h_mod_ind.resize(h_mod_ind.size());
-            h_mod_pairs.resize(h_mod_pairs.size());
+
+
+            std::ifstream mm_pairs_file (mm_pairs_path);
+            m_ids.resize(2);
+
+            /*********************************
+            / Module doublets
+            *********************************/
+            if (mm_pairs_file.is_open()){
+                while (getline(mm_pairs_file, mm_line)){
+
+                    auto start = 0U;
+                    auto end   = mm_line.find(delim);
+
+                    for (int i=0; i<2; i++){
+                        int m_id = std::stoi(mm_line.substr(start, end - start));
+                        m_ids[i] = m_id;
+
+                        start = end + delim.length();
+                        end   = mm_line.find(delim, start);
+                    }
+                    
+                    h_mod_ind.push_back(m_ids[0]);
+                    h_mod_pairs.push_back(m_ids[1]);
+                }
+                mm_pairs_file.close();
+            }
+
+            // h_mod_ind.resize(h_mod_ind.size());
+            // h_mod_pairs.resize(h_mod_pairs.size());
+
+            
             // Sort
-            auto ab = DeviceSort(static_cast<unsigned*>(h_mod_ind.data()),
-                                 static_cast<unsigned*>(h_mod_pairs.data()),
-                                 h_mod_ind.size());
-            mod_pairs = std::get<1>(ab);
+            // auto ab = DeviceSort(static_cast<unsigned*>(h_mod_ind.data()),
+            //                      static_cast<unsigned*>(h_mod_pairs.data()),
+            //                      h_mod_ind.size());
+
+            // for (int i = 0; i < h_mod_ind.size(); i++) {
+            //     // if ((*(std::get<0>(ab) + i)) > n_mod) {
+            //     //     std::cout << "Index: " << *(std::get<0>(ab) + i) << ", pair: " << *(std::get<1>(ab) + i) << std::endl;
+            //     // }
+            //     std::cout << "Index: " << *(std::get<0>(ab) + i) << ", pair: " << *(std::get<1>(ab) + i) << std::endl;
+            // }
+
+            //h_mod_ind.insert(h_mod_ind.begin(),
+            //                 static_cast<unsigned*>(std::get<0>(ab)),
+            //                 static_cast<unsigned*>(std::get<0>(ab)) + h_mod_ind.size());
+
+            
+            // Calculate offsets
+            for (auto ind : h_mod_ind) {
+                h_mod_pairs_offsets[ind] += 1;
+            }
+
+            //h_mod_pairs.insert(h_mod_pairs.begin(),
+            //                   static_cast<unsigned*>(std::get<1>(ab)),
+            //                   static_cast<unsigned*>(std::get<1>(ab)) + h_mod_pairs.size());
+
+            // Sum offsets
+            unsigned summed_offsets_arr[n_mod];
+            unsigned* summed_offsets = summed_offsets_arr;
+            PrefixSum(static_cast<unsigned*>(h_mod_pairs_offsets.data()), n_mod, summed_offsets);
+            h_mod_pairs_offsets.insert(h_mod_pairs_offsets.begin(),
+                                       summed_offsets,
+                                       summed_offsets + n_mod);
 
         } // constructor ends
 
@@ -191,17 +220,18 @@ class EventData{
         std::vector<unsigned> h_hit_offsets;
 
     public:
-        Hit* hits;
+        // Hit* hits;
 
-        // Hit* hits() const { return hits; }
+        Hit* hits() { return static_cast<Hit*>(h_hits.data()); }
 
-        unsigned* offsets() { return PrefixSum(static_cast<unsigned*>(h_hit_offsets.data()), h_hit_offsets.size()); }
+        unsigned* offsets() { return static_cast<unsigned*>(h_hit_offsets.data()); }
 
         unsigned len() const { return h_hits.size(); }
     
     public:
         // constructor
         EventData(std::string event_path_arg, unsigned int n_modules){
+            unsigned n_mod = 18359; // Counted from processing file
 
             event_path = event_path_arg;
 
@@ -218,8 +248,7 @@ class EventData{
 
                 std::vector<std::string> col_entries;
                 col_entries.reserve(15);
-                h_hit_offsets.resize(18359); // Resize with number of modules
-
+                h_hit_offsets.resize(n_mod); // Resize with number of modules
                 while (getline(event_file, hit_line)){
 
                     //boost::split(col_entries, hit_line, boost::is_any_of(", "), boost::token_compress_on);
@@ -247,14 +276,25 @@ class EventData{
                     col_entries.clear();
              
                 } // end of while loop
-
-                auto ab = DeviceSort(static_cast<unsigned*>(h_hit_inds.data()),
-                                     static_cast<Hit*>(h_hits.data()),
-                                     h_hit_inds.size());
-                hits = std::get<1>(ab);
-
             }
             event_file.close();
+
+            auto ab = DeviceSort(static_cast<unsigned*>(h_hit_inds.data()),
+                                 static_cast<Hit*>(h_hits.data()),
+                                 h_hit_inds.size());
+
+
+            h_hits.insert(h_hits.begin(),
+                          std::get<1>(ab),
+                          std::get<1>(ab) + h_hits.size());
+
+            // Sum offsets
+            unsigned summed_offsets_arr[n_mod];
+            unsigned* summed_offsets = summed_offsets_arr;
+            PrefixSum(static_cast<unsigned*>(h_hit_offsets.data()), n_mod, summed_offsets);
+            h_hit_offsets.insert(h_hit_offsets.begin(),
+                                 summed_offsets,
+                                 summed_offsets + n_mod);
 
         } // end of constructor
 

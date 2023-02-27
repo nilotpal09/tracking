@@ -4,13 +4,12 @@
 // cub
 #include <cub/device/device_radix_sort.cuh>
 
-inline unsigned* PrefixSum(unsigned* arr, unsigned size) {
-    unsigned sum = 0;
-    for (unsigned i = 0; i < size; i++) {
-        sum += arr[i];
-        arr[i] = sum;
+inline void PrefixSum(unsigned* arr, unsigned size, unsigned* prefixSum) {
+    prefixSum[0] = arr[0];
+    // Adding present element with previous element
+    for (int i = 1; i < size; i++) {
+        prefixSum[i] = prefixSum[i - 1] + arr[i];
     }
-    return arr;
 }
 
 // Need to template this
