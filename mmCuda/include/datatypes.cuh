@@ -2,6 +2,7 @@
 #define __DATATYPE_CUH__
 
 #include "../include/utility.cuh"
+#include "../include/memoryscheduler.cuh"
 
 #include <iostream>
 #include <fstream>
@@ -17,59 +18,104 @@
 #include <locale>
 #include <iomanip>
 
+__global__ inline void  DeviceCalculateHitPairs(
+    unsigned n_mod_pairs,
+    unsigned* d_mod_pair_inds,
+    unsigned* d_mod_pairs,
+    unsigned* d_hit_offsets,
+    unsigned* d_hit_pairs_offsets
+) {
+    for (int i = blockIdx.x; i < n_mod_pairs; i += gridDim.x) {
+        unsigned mod1 = d_mod_pair_inds[i];
+        unsigned mod2 = d_mod_pairs[i];
+
+        unsigned n_hits_mod1 = d_hit_offsets[mod1 + 1] - d_hit_offsets[mod1];
+        unsigned n_hits_mod2 = d_hit_offsets[mod2 + 1] - d_hit_offsets[mod2];
+
+        d_hit_pairs_offsets[i] = n_hits_mod1 * n_hits_mod2;
+    }
+}
+
+__global__ inline void getMax(
+    unsigned* max,
+    unsigned n_mod_pairs,
+    unsigned* d_hit_pairs_offsets
+) {
+    *max = d_hit_pairs_offsets[n_mod_pairs - 1];
+    printf("Max: %d \n", *max);
+}
+
+__global__ inline void printHitIndices(
+    unsigned* d_hit_offsets,
+    unsigned n_hits
+) {
+    for (int i = blockIdx.x; i < n_hits; i += gridDim.x) {
+        //unsigned diff = d_hit_offsets[i + 1] - d_hit_offsets[i];
+        //printf("Hit %u: %u %u \n", i, diff, d_hit_offsets[i]);
+        printf("Hit %u: %u \n", i, d_hit_offsets[i]);
+    }
+    // printf("Last hit: %u \n", d_hit_offsets[n_hits] - d_hit_offsets[n_hits - 1]);
+    // printf("Total hits: %u \n", d_hit_offsets[n_hits]);
+}
+
+
 
 class ModuleMap{
 
     private:
+        // Counted from file
+        static constexpr unsigned n_mod = 18360; 
+        static constexpr unsigned n_mod_pairs = 509461;
+        static constexpr unsigned n_mod_triplets = 1242265;
+
+        /*
+        * Device pointers
+        */
+        struct DevicePtrs{
+            unsigned* modules;
+            unsigned* pairs;
+        };
+
+        DevicePtrs d_ptrs;
+
+        void allocate_device_memory(){
+            MemoryScheduler::allocate(&d_ptrs.modules, n_mod_pairs);
+            MemoryScheduler::allocate(&d_ptrs.pairs, n_mod_pairs);
+            std::cout << "Allocated device memory for module map" << std::endl;
+            unsigned long long int total_mem = 0;
+            total_mem += n_mod_pairs * sizeof(unsigned);
+            total_mem += n_mod_pairs * sizeof(unsigned);
+            std::cout << "Total memory allocated: " << total_mem / 1e9 << " GB" << std::endl;
+        }
+
+    
         std::string mm_path;
         std::vector<unsigned> h_mod_ind;
         std::vector<unsigned> h_mod_pairs;
         std::vector<unsigned> h_mod_pairs_offsets;
         std::vector<unsigned> h_mod_triplets;
 
-        unsigned* mod_pairs;
-
-        unsigned num_doublets;
-
     public:
-        // unsigned int t2d_link_count = 0;
+        unsigned** d_modules() { return &d_ptrs.modules; }
 
-        // std::vector<unsigned int> flatten_triplets;
-        // std::vector<unsigned int> flatten_doublets;
-        // std::vector<unsigned int> flatten_t2d_links;
-
-        // "A disater awaits" (ownership of the pointers can cause trouble later)
-        // But good enough for now
-        // thrust::device_vector<unsigned int> td_flatten_doublets;
-        // thrust::device_vector<unsigned int> td_flatten_triplets;
-        // thrust::device_vector<unsigned int> td_flatten_t2d_links;
-
-        // unsigned int* d_flatten_doublets;
-        // unsigned int* d_flatten_triplets;
-        // unsigned int* d_flatten_t2d_links;
-
-        unsigned* triplets() { return static_cast<unsigned*>(h_mod_triplets.data()); }
-
-        unsigned len_triplets() { return h_mod_triplets.size(); }
-
-        unsigned num_triplets() { return h_mod_triplets.size() / 3; }
-
-        unsigned* doublets() { return static_cast<unsigned*>(h_mod_pairs.data()); }
-
-        unsigned* offsets() { return static_cast<unsigned*>(h_mod_pairs_offsets.data()); }
-
-        unsigned len_doublets() { return h_mod_pairs.size(); }
+        unsigned** d_pairs() { return &d_ptrs.pairs; }
     
     public:
+        static constexpr unsigned num_modules() { return n_mod; }
+        static constexpr unsigned num_doublets() { return n_mod_pairs; }
+        static constexpr unsigned num_triplets() { return n_mod_triplets; }
 
         // constructor
         ModuleMap(std::string mm_path_arg, std::string mm_pairs_path){
-            unsigned n_mod = 18359; // Counted from processing file
-            unsigned n_mod_pairs = 509461;
-            unsigned n_mod_triplets = 1242265;
+
+            h_mod_ind.reserve(n_mod_pairs); // Reserve a bit of memory
+            h_mod_pairs.reserve(n_mod_pairs);
+
+            //h_mod_triplets.reserve(n_mod_triplets * 3);
+
 
             // Reserve a bit of memory
-            h_mod_pairs_offsets.resize(n_mod);
+            h_mod_pairs_offsets.resize(n_mod + 1);
             h_mod_ind.reserve(n_mod_pairs);
             h_mod_pairs.reserve(n_mod_pairs);
             h_mod_triplets.reserve(n_mod_triplets * 3);
@@ -81,7 +127,6 @@ class ModuleMap{
 
             std::vector<unsigned int> m_ids;
             m_ids.resize(3);
-            num_doublets = 0;
 
             /*********************************
             / Module triplets
@@ -137,43 +182,16 @@ class ModuleMap{
                 mm_pairs_file.close();
             }
 
-            // h_mod_ind.resize(h_mod_ind.size());
-            // h_mod_pairs.resize(h_mod_pairs.size());
-
             
-            // Sort
-            // auto ab = DeviceSort(static_cast<unsigned*>(h_mod_ind.data()),
-            //                      static_cast<unsigned*>(h_mod_pairs.data()),
-            //                      h_mod_ind.size());
-
-            // for (int i = 0; i < h_mod_ind.size(); i++) {
-            //     // if ((*(std::get<0>(ab) + i)) > n_mod) {
-            //     //     std::cout << "Index: " << *(std::get<0>(ab) + i) << ", pair: " << *(std::get<1>(ab) + i) << std::endl;
-            //     // }
-            //     std::cout << "Index: " << *(std::get<0>(ab) + i) << ", pair: " << *(std::get<1>(ab) + i) << std::endl;
-            // }
-
-            //h_mod_ind.insert(h_mod_ind.begin(),
-            //                 static_cast<unsigned*>(std::get<0>(ab)),
-            //                 static_cast<unsigned*>(std::get<0>(ab)) + h_mod_ind.size());
-
-            
-            // Calculate offsets
-            for (auto ind : h_mod_ind) {
-                h_mod_pairs_offsets[ind] += 1;
-            }
-
-            //h_mod_pairs.insert(h_mod_pairs.begin(),
-            //                   static_cast<unsigned*>(std::get<1>(ab)),
-            //                   static_cast<unsigned*>(std::get<1>(ab)) + h_mod_pairs.size());
-
-            // Sum offsets
-            unsigned summed_offsets_arr[n_mod];
-            unsigned* summed_offsets = summed_offsets_arr;
-            PrefixSum(static_cast<unsigned*>(h_mod_pairs_offsets.data()), n_mod, summed_offsets);
-            h_mod_pairs_offsets.insert(h_mod_pairs_offsets.begin(),
-                                       summed_offsets,
-                                       summed_offsets + n_mod);
+            allocate_device_memory();
+            CUDA_WARN(cudaMemcpy(d_ptrs.modules,
+                                 static_cast<unsigned*>(h_mod_ind.data()),
+                                 h_mod_ind.size() * sizeof(unsigned),
+                                 cudaMemcpyHostToDevice));
+            CUDA_WARN(cudaMemcpy(d_ptrs.pairs,
+                                 static_cast<unsigned*>(h_mod_pairs.data()),
+                                 h_mod_pairs.size() * sizeof(unsigned),
+                                 cudaMemcpyHostToDevice));
 
         } // constructor ends
 
@@ -190,7 +208,7 @@ class ModuleMap{
             std::cout << std::fixed << std::showpoint << std::setprecision(3);
 
             std::cout << "# triplets: " << num_triplets() << std::endl;
-            std::cout << "# doublets: " << len_doublets() << std::endl;
+            std::cout << "# doublets: " << num_doublets() << std::endl;
 
             std::cout << std::string(50, '-') << std::endl;
         }
@@ -213,26 +231,45 @@ struct Hit {
 class EventData{
 
     private:
+        struct DevicePtrs{
+            Hit* hits;
+            unsigned* hit_offsets;
+            bool* hit_pairs;
+            unsigned* hit_pairs_offsets;
+        };
+
+        DevicePtrs d_ptrs;
+
+        void allocate_device_memory_hits(unsigned n_hits){
+            MemoryScheduler::allocate(&d_ptrs.hits, n_hits);
+            MemoryScheduler::allocate(&d_ptrs.hit_offsets, ModuleMap::num_modules() + 1);
+        }
+
         std::string event_path;
 
         std::vector<unsigned> h_hit_inds;
         std::vector<Hit> h_hits;
         std::vector<unsigned> h_hit_offsets;
+        std::vector<unsigned> h_hit_pairs_offsets;
+        unsigned n_hits;
+        unsigned n_hit_pairs;
 
     public:
         // Hit* hits;
 
-        Hit* hits() { return static_cast<Hit*>(h_hits.data()); }
+        Hit** d_hits() { return &d_ptrs.hits; }
 
-        unsigned* offsets() { return static_cast<unsigned*>(h_hit_offsets.data()); }
+        unsigned** d_hit_offsets() { return &d_ptrs.hit_offsets; }
 
-        unsigned len() const { return h_hits.size(); }
+        bool** d_hit_pairs() { return &d_ptrs.hit_pairs; }
+
+        unsigned** d_hit_pairs_offsets() { return &d_ptrs.hit_pairs_offsets; }
+
     
     public:
         // constructor
-        EventData(std::string event_path_arg, unsigned int n_modules){
-            unsigned n_mod = 18359; // Counted from processing file
-
+        EventData(std::string event_path_arg, ModuleMap& mm, unsigned int n_modules){
+            n_hits = 0;
             event_path = event_path_arg;
 
             // read the file and make the flatten triplets
@@ -248,7 +285,7 @@ class EventData{
 
                 std::vector<std::string> col_entries;
                 col_entries.reserve(15);
-                h_hit_offsets.resize(n_mod); // Resize with number of modules
+                h_hit_offsets.resize(ModuleMap::num_modules()); // Resize with number of modules
                 while (getline(event_file, hit_line)){
 
                     //boost::split(col_entries, hit_line, boost::is_any_of(", "), boost::token_compress_on);
@@ -271,31 +308,159 @@ class EventData{
                     hit.z = std::stof(col_entries.at(3));
                     h_hits.push_back(hit);
                     unsigned mod = std::stoi(col_entries.back());
+                    if (mod >= ModuleMap::num_modules())
+                        std::cout << "Module ID is greater than number of modules" << std::endl;
                     h_hit_inds.push_back(mod);
                     h_hit_offsets[mod] += 1;
                     col_entries.clear();
-             
+                    n_hits += 1;
                 } // end of while loop
             }
             event_file.close();
 
-            auto ab = DeviceSort(static_cast<unsigned*>(h_hit_inds.data()),
+            allocate_device_memory_hits(n_hits);
+
+            /*
+                Sort Hits by module
+            */
+            unsigned* d_hit_inds;
+            MemoryScheduler::allocate(&d_hit_inds, n_hits);
+            CUDA_WARN(cudaMemcpy(d_hit_inds,
+                                 static_cast<unsigned*>(h_hit_inds.data()),
+                                 n_hits * sizeof(unsigned),
+                                 cudaMemcpyHostToDevice));
+            
+            
+            Hit* d_hits;
+            MemoryScheduler::allocate(&d_hits, n_hits);
+            CUDA_WARN(cudaMemcpy(d_hits,
                                  static_cast<Hit*>(h_hits.data()),
-                                 h_hit_inds.size());
+                                 n_hits * sizeof(Hit),
+                                 cudaMemcpyHostToDevice));
+
+            
+            unsigned* d_hit_ind_out;
+            MemoryScheduler::allocate(&d_hit_ind_out, n_hits);
+            
+            void     *d_temp_storage = NULL;
+            size_t   temp_storage_bytes = 0;
+            CUDA_WARN(cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes,
+                                                      d_hit_inds, d_hit_ind_out, d_hits, d_ptrs.hits, n_hits));
+            cudaDeviceSynchronize();
+            
+            // Allocate temporary storage
+            CUDA_WARN(cudaMalloc(&d_temp_storage, temp_storage_bytes));
+            
+            CUDA_WARN(cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes,
+                                                      d_hit_inds, d_hit_ind_out, d_hits, d_ptrs.hits, n_hits));
+            cudaDeviceSynchronize();
 
 
-            h_hits.insert(h_hits.begin(),
-                          std::get<1>(ab),
-                          std::get<1>(ab) + h_hits.size());
+            MemoryScheduler::free(&d_hit_inds);
+            MemoryScheduler::free(&d_hits);
+            MemoryScheduler::free(&d_hit_ind_out);
+            CUDA_WARN(cudaFree(d_temp_storage));
 
-            // Sum offsets
-            unsigned summed_offsets_arr[n_mod];
-            unsigned* summed_offsets = summed_offsets_arr;
-            PrefixSum(static_cast<unsigned*>(h_hit_offsets.data()), n_mod, summed_offsets);
-            h_hit_offsets.insert(h_hit_offsets.begin(),
-                                 summed_offsets,
-                                 summed_offsets + n_mod);
+            /*
+                Calculate Hit offsets
+            */
+            
+            // Copy hit offsets to device
+            d_temp_storage = NULL;
+            temp_storage_bytes = 0;
+            unsigned* d_hit_offsets;
+            MemoryScheduler::allocate(&d_hit_offsets, ModuleMap::num_modules());
+            CUDA_WARN(cudaMemcpy(d_hit_offsets,
+                                 static_cast<unsigned*>(h_hit_offsets.data()),
+                                 ModuleMap::num_modules() * sizeof(unsigned),
+                                 cudaMemcpyHostToDevice));
 
+            cudaDeviceSynchronize();
+
+            // Maybe a check to ensure all offsets are 0
+            CUDA_WARN(cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes,
+                                                    d_hit_offsets, &d_ptrs.hit_offsets[1], ModuleMap::num_modules()));
+            cudaDeviceSynchronize();
+            
+            // Allocate temporary storage
+            CUDA_WARN(cudaMalloc(&d_temp_storage, temp_storage_bytes));
+
+            // Run inclusive prefix sum
+            CUDA_WARN(cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes,
+                                                    d_hit_offsets, &d_ptrs.hit_offsets[1], ModuleMap::num_modules()));
+            cudaDeviceSynchronize();
+
+            // Free temporary storage
+            MemoryScheduler::free(&d_hit_offsets);
+            CUDA_WARN(cudaFree(d_temp_storage));
+            
+            /*
+                Calculate Hit Pairs
+            */
+            unsigned* d_hit_pairs_offsets;
+            MemoryScheduler::allocate(&d_hit_pairs_offsets, ModuleMap::num_doublets());
+            
+            CUDA_CHECK();
+            
+            // Strangely this is quicker with 65535 blocks rather than num_doublets
+            // By like a factor of 5
+            DeviceCalculateHitPairs<<<65535, 1>>>(
+                ModuleMap::num_doublets(),
+                *mm.d_modules(),
+                *mm.d_pairs(),
+                d_ptrs.hit_offsets,
+                d_hit_pairs_offsets
+            );
+
+            CUDA_CHECK();
+
+            cudaDeviceSynchronize();
+
+
+            n_hit_pairs = 0;
+            unsigned* d_n_hit_pairs;
+            MemoryScheduler::allocate(&d_n_hit_pairs, 1);
+            CUDA_WARN(cudaMemcpy(d_n_hit_pairs,
+                                 &n_hit_pairs,
+                                 sizeof(unsigned),
+                                 cudaMemcpyHostToDevice));
+            
+            CUDA_CHECK();
+            
+            MemoryScheduler::allocate(&d_ptrs.hit_pairs_offsets, ModuleMap::num_doublets() + 1);
+
+            d_temp_storage = NULL;
+            temp_storage_bytes = 0;
+            
+            CUDA_WARN(cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes,
+                                                    d_hit_pairs_offsets, &d_ptrs.hit_pairs_offsets[1], ModuleMap::num_doublets()));
+            cudaDeviceSynchronize();
+
+            // Allocate temporary storage
+            CUDA_WARN(cudaMalloc(&d_temp_storage, temp_storage_bytes));
+
+            CUDA_WARN(cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes,
+                                                    d_hit_pairs_offsets, &d_ptrs.hit_pairs_offsets[1], ModuleMap::num_doublets()));
+            cudaDeviceSynchronize();
+
+            MemoryScheduler::free(&d_hit_pairs_offsets);
+            CUDA_WARN(cudaFree(d_temp_storage));
+
+            CUDA_CHECK();
+
+            cudaDeviceSynchronize();
+
+            getMax<<<1, 1>>>(d_n_hit_pairs, ModuleMap::num_doublets(), &d_ptrs.hit_pairs_offsets[1]);
+
+            CUDA_WARN(cudaMemcpy(&n_hit_pairs,
+                                 d_n_hit_pairs,
+                                 sizeof(unsigned),
+                                 cudaMemcpyDeviceToHost));
+
+            MemoryScheduler::free(&d_n_hit_pairs);
+
+            MemoryScheduler::allocate(&d_ptrs.hit_pairs, n_hit_pairs);
+            
         } // end of constructor
 
 
@@ -310,12 +475,14 @@ class EventData{
             std::cout.imbue(std::locale(""));
             std::cout << std::fixed << std::showpoint << std::setprecision(3);
 
-            std::cout << "# hits: " << len() << std::endl;
+            std::cout << "# hits: " << n_hits << std::endl;
+            std::cout << "# hit pairs: " << n_hit_pairs << std::endl;
 
             std::cout << std::string(50, '-') << std::endl;
         }
 
 };
+
 
 
 #endif

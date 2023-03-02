@@ -9,6 +9,7 @@ __device__ bool doublet_selection(
     Hit hit_a,
     Hit hit_b) {
 
+    float x_diff = hit_a.x - hit_b.x;
     return true;
 }
 
@@ -20,56 +21,46 @@ __device__ bool triplet_selection(
     return true;
 }
 
-
+#define N_HITS_PER_BLOCK 32
 
 __global__ void doublet_finding(
     unsigned n_mods,
+    unsigned n_mod_pairs,
+    unsigned* module_pairs_indices,
     unsigned* module_pairs,
-    unsigned* module_pairing_offsets,
     Hit* hits,
     unsigned* hits_offsets,
-    unsigned* hits_a_idxs,
-    unsigned* hits_b_idxs,
-    unsigned* hit_doublets_atomics,
-    const unsigned n_max_doublets) {
-    for (unsigned mod_i = blockIdx.x; mod_i < n_mods - 1; mod_i += gridDim.x) {
-        unsigned mod_i_offset = module_pairing_offsets[mod_i];
-        unsigned n_mod_i_pairs = module_pairing_offsets[mod_i + 1] - mod_i_offset;
-        for (unsigned mod_j_ind = blockIdx.y; mod_j_ind < n_mod_i_pairs; mod_j_ind += gridDim.y) {
-            unsigned mod_j = module_pairs[mod_i_offset + mod_j_ind];
+    bool* hits_pairs_acc,
+    unsigned* hits_pairs_acc_offsets) {
+    for (unsigned i = blockIdx.x; i < n_mod_pairs - 1; i += gridDim.x) {
+        unsigned mod_i = module_pairs_indices[i];
+        unsigned mod_j = module_pairs[i];
 
-            if (mod_i + 1 > n_mods || mod_j + 1 > n_mods) {
-                break;
-            }
-            
-            unsigned hits_i_offset = hits_offsets[mod_i];
-            unsigned hits_j_offset = hits_offsets[mod_j];
+        unsigned hits_i_offset = hits_offsets[mod_i];
+        unsigned hits_j_offset = hits_offsets[mod_j];
 
-            unsigned n_hits_i = hits_offsets[mod_i + 1] - hits_i_offset;
-            unsigned n_hits_j = hits_offsets[mod_j + 1] - hits_j_offset;
+        unsigned n_hits_i = hits_offsets[mod_i + 1] - hits_i_offset;
+        unsigned n_hits_j = hits_offsets[mod_j + 1] - hits_j_offset;
+        
+        unsigned hits_pairs_acc_offset = hits_pairs_acc_offsets[i];
+        bool* is_hits_pair = &hits_pairs_acc[hits_pairs_acc_offset];
 
-            if (n_hits_i > 1000 || n_hits_j > 1000) {
-                break;
-            }
+        int x = threadIdx.x + blockIdx.x * blockDim.x;
+        int y = threadIdx.y + blockIdx.y * blockDim.y;
 
-            unsigned* hit_doublets_atomic = &hit_doublets_atomics[mod_i_offset + mod_j_ind];
-            unsigned* hits_a_idx = &hits_a_idxs[(mod_i_offset + mod_j_ind) * n_max_doublets];
-            unsigned* hits_b_idx = &hits_b_idxs[(mod_i_offset + mod_j_ind) * n_max_doublets];
-
-            for (unsigned hit_a_ind = threadIdx.x; hit_a_ind < n_hits_i; hit_a_ind += blockDim.x) {
-                for (unsigned hit_b_ind = threadIdx.y; hit_b_ind < n_hits_j; hit_b_ind += blockDim.y) {
-                    // Perform some selection on the hit pair
-                    if (doublet_selection(
-                        hits[hits_i_offset + hit_a_ind],
-                        hits[hits_j_offset + hit_b_ind]
-                    )) {
-                        unsigned pair_id = atomicAdd(hit_doublets_atomic, 1);
-                        hits_a_idx[pair_id] = hit_a_ind;
-                        hits_b_idx[pair_id] = hit_b_ind;
-                    }
+        // Fix bounday conditions when n_hits is not a multiple of N_HITS_PER_BLOCK
+        for (int i = 0; i < n_hits_i/N_HITS_PER_BLOCK; i++) {
+            for (int j = 0; j < n_hits_j/N_HITS_PER_BLOCK; j++) {
+                int blockId = i + j * N_HITS_PER_BLOCK;
+                int threadId = blockId * (blockDim.x * blockDim.y) + (threadIdx.y * blockDim.x) + threadIdx.x;
+                if (doublet_selection(hits[hits_i_offset + i * N_HITS_PER_BLOCK + x],
+                                      hits[hits_j_offset + j * N_HITS_PER_BLOCK + y])) {
+                    is_hits_pair[threadId] = true;
+                } else {
+                    is_hits_pair[threadId] = false;
                 }
             }
-        }
+        }       
     }
 }
 
@@ -159,3 +150,58 @@ __global__ void triplet_finding(
     }
 
 }
+
+/*
+            unsigned hits_i_offset = hits_offsets[mod_i];
+            unsigned hits_j_offset = hits_offsets[mod_j];
+
+            unsigned n_hits_i = hits_offsets[mod_i + 1] - hits_i_offset;
+            unsigned n_hits_j = hits_offsets[mod_j + 1] - hits_j_offset;
+
+            unsigned x_loops = n_hits_i / N_HITS_PER_BLOCK;
+            unsigned y_loops = n_hits_j / N_HITS_PER_BLOCK;
+
+            __shared__ unsigned hit_doublets_atomic;
+
+            for (unsigned x = 0; x < x_loops; x++) {
+                for (unsigned hit_a_ind = threadIdx.x + (x * N_HITS_PER_BLOCK); hit_a_ind < N_HITS_PER_BLOCK + (x * N_HITS_PER_BLOCK); hit_a_ind += blockDim.x) {
+                    if (hit_a_ind < n_hits_i) {
+                        hits_a[hit_a_ind] = hits[hits_i_offset + hit_a_ind];
+                    }   
+                }
+                for (unsigned y = 0; y < y_loops; y++) {
+                    // Copy hits to shared memory
+                    for (unsigned hit_b_ind = threadIdx.x + (x * N_HITS_PER_BLOCK); hit_b_ind < N_HITS_PER_BLOCK + (x * N_HITS_PER_BLOCK); hit_b_ind += blockDim.x) {
+                        if (hit_b_ind < n_hits_j) {
+                            hits_b[hit_b_ind] = hits[hits_j_offset + hit_b_ind];
+                        }
+
+                    }
+                    __syncthreads();
+
+                    // unsigned* hit_doublets_atomic = &hit_doublets_atomics[mod_i_offset + mod_j_ind];
+                    // unsigned* hits_a_idx = &hits_a_idxs[(mod_i_offset + mod_j_ind) * n_max_doublets];
+                    // unsigned* hits_b_idx = &hits_b_idxs[(mod_i_offset + mod_j_ind) * n_max_doublets];
+                    
+                    for (unsigned hit_a_ind = threadIdx.x; hit_a_ind < N_HITS_PER_BLOCK; hit_a_ind += blockDim.x) {
+                        for (unsigned hit_b_ind = threadIdx.y; hit_b_ind < N_HITS_PER_BLOCK; hit_b_ind += blockDim.y) {
+                            if (hit_a_ind >= n_hits_i || hit_b_ind >= n_hits_j) {
+                                break;
+                            }
+                            // Perform some selection on the hit pair
+                            if (doublet_selection(
+                                hits_a[hit_a_ind],
+                                hits_b[hit_b_ind]
+                            )) {
+                                unsigned pair_id = atomicAdd(&hit_doublets_atomic, 1);
+                                //hits_a_idx[pair_id] = hit_a_ind;
+                                //hits_b_idx[pair_id] = hit_b_ind;
+                            }
+                        }
+                    }
+                    __syncthreads();
+                    
+                }
+            }
+            hit_doublets_atomics[mod_i_offset + mod_j_ind] = hit_doublets_atomic;
+            */
