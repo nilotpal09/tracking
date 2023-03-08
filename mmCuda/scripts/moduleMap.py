@@ -43,7 +43,7 @@ def convert_mm():
         'module1': pa_sorted,
         'module2': pb_sorted
     }
-    pdb.set_trace()
+
     # save it for later usage
     #with open('transformed_data/module_map/hash2int_dict.pkl', 'wb') as f:
     #    pickle.dump(hash2int_dict, f)
@@ -53,8 +53,13 @@ def convert_mm():
     df['module2'] = df['module2'].map(hash2int_dict) 
     df['module3'] = df['module3'].map(hash2int_dict)
 
-    df_pairs = pd.DataFrame(module_pairs_mapped)
+    pairs = list(zip(pa_sorted, pb_sorted))
 
+    df['pair_a'] = list(pairs.index(tuple(sorted(p))) for p in zip(df['module1'], df['module2']))
+    df['pair_b'] = list(pairs.index(tuple(sorted(p))) for p in zip(df['module2'], df['module3']))
+
+    df_pairs = pd.DataFrame(module_pairs_mapped)
+ 
     # save the new module map
     new_mm_path = f'/srv01/agrp/shieldse/storage/ML/trackingData/transformed_data/module_map/{map_name}.csv'
     df.to_csv(new_mm_path, sep=" ", index=False, header=False)
