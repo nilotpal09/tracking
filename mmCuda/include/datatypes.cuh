@@ -25,11 +25,43 @@ struct ModuleTriplet {
 
   unsigned pair_i;
   unsigned pair_j;
+
+  float z0_max_ab;
+  float z0_min_ab;
+  float dphi_max_ab;
+  float dphi_min_ab;
+  float phi_slope_max_ab;
+  float phi_slope_min_ab;
+  float deta_max_ab;
+  float deta_min_ab;
+
+  float z0_max_bc;
+  float z0_min_bc;
+  float dphi_max_bc;
+  float dphi_min_bc;
+  float phi_slope_max_bc;
+  float phi_slope_min_bc;
+  float deta_max_bc;
+  float deta_min_bc;
+
+  float diff_dzdr_max;
+  float diff_dzdr_min;
+  float diff_dydx_max;
+  float diff_dydx_min;
 };
 
 struct ModuleDoublet {
   unsigned module_a;
   unsigned module_b;
+
+  float z0_max;
+  float z0_min;
+  float dphi_max;
+  float dphi_min;
+  float phi_slope_max;
+  float phi_slope_min;
+  float deta_max;
+  float deta_min;
 };
 
 __global__ void DeviceCalculateHitPairs(unsigned n_mod_pairs,
@@ -37,6 +69,12 @@ __global__ void DeviceCalculateHitPairs(unsigned n_mod_pairs,
                                         unsigned *d_hit_offsets,
                                         unsigned *d_hit_pairs_offsets,
                                         unsigned *d_hit_sum_offsets);
+
+__global__ void DeviceCalculateHitTriplets(unsigned n_mod_triplets,
+                                           ModuleTriplet *d_mod_triplets,
+                                           unsigned *d_hit_pairs_offsets,
+                                           unsigned *d_hit_triplets_offsets);
+
 __global__ void DeviceInitHitPairs(unsigned n_mod_pairs,
                                    ModuleDoublet *d_mod_doublets,
                                    unsigned *d_hit_offsets,
@@ -51,7 +89,7 @@ class ModuleMap {
 private:
   // Counted from file
   static constexpr unsigned n_mod = 18360;
-  static constexpr unsigned n_mod_pairs = 509461;
+  static constexpr unsigned n_mod_pairs = 296502;
   static constexpr unsigned n_mod_triplets = 1242265;
 
   /*
@@ -92,6 +130,9 @@ struct Hit {
   float x;
   float y;
   float z;
+  float eta;
+  float phi;
+  float r;
 };
 
 class EventData {
@@ -122,6 +163,7 @@ private:
   std::vector<unsigned> h_hit_pairs_offsets;
   unsigned n_hits;
   unsigned n_hit_pairs;
+  unsigned n_hit_triplets;
 
   void allocate_device_memory_hits(unsigned n_hits);
 

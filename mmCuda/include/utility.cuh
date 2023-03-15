@@ -2,7 +2,6 @@
 #define UTILITY_H
 
 // cub
-#include "../include/memoryscheduler.cuh"
 #include <cstdio>
 #include <cub/device/device_radix_sort.cuh>
 #include <cub/device/device_scan.cuh>
@@ -27,6 +26,10 @@
       CubDebugExit(err);                                                       \
     }                                                                          \
   } while (0)
+
+#define DEBUG(XXX)
+#ifndef REL do {XXX; } while (0)
+#endif
 
 template <typename T>
 inline void PrefixSum(T **d_in, T **d_out, unsigned size) {
@@ -98,4 +101,12 @@ inline void ReduceFlagged(F **d_flags_in, V **d_values_in, V **d_values_out,
   cudaFree(d_num_selected_out);
   cudaFree(d_temp_storage);
 }
+
+// Module coordinates
+__device__ __host__ float Phi(const float &x, const float &y);
+
+__device__ __host__ float R(const float &x, const float &y);
+
+__device__ __host__ float Eta(const float &x, const float &y, const float &z);
+
 #endif

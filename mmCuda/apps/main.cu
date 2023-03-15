@@ -3,6 +3,20 @@
 
 #include <cuda_profiler_api.h>
 
+void graph_builder_baseline(
+    ModuleMap& mm,
+    EventData& event
+) {
+    dim3 grid_dim(65535);
+    dim3 block_dim(16, 8, 8);
+    triplet_finding_baseline<<<grid_dim, block_dim>>>(
+        ModuleMap::num_triplets(), *mm.d_triplets(), *event.d_hits(),
+        *event.d_hit_offsets(), *event.d_hit_pairs(),
+      *event.d_hit_pairs_offsets());
+    cudaDeviceSynchronize();
+    CUDA_CHECK();
+}
+
 
 void graph_builder(
   ModuleMap& mm,
@@ -11,7 +25,6 @@ void graph_builder(
   /*
     Doublet finder
   */
-  cudaDeviceSynchronize();
   dim3 grid_dim(65535);
   dim3 block_dim(32, 32);
   // Call doublet finding kernal
@@ -56,6 +69,11 @@ void graph_builder(
     ModuleMap::num_doublets()
   );
 
+  unsigned* total;
+  cudaMalloc(&total, 1 * sizeof(unsigned));
+  getMax<<<1,1>>>(total, ModuleMap::num_doublets(),
+                   *event.d_hit_module_offsets());
+
   MemoryScheduler::free(event.d_hit_module_sum());
 
   cudaDeviceSynchronize();
@@ -64,7 +82,7 @@ void graph_builder(
   /*
     Triplet finder
   */
-  triplet_finding<<<grid_dim,block_dim>>>(
+  triplet_finding<<<grid_dim,32>>>(
       ModuleMap::num_triplets(), *mm.d_triplets(), *event.d_hits(),
       *event.d_hit_offsets(), *event.d_hit_pairs(), *event.d_hit_sum(),
       *event.d_hit_sum_offsets(), *event.d_hits_a_reduced(),
@@ -79,10 +97,10 @@ void graph_builder(
 int main(int argc, char *argv[]) {
 
   std::string mm_path{
-      "/srv01/agrp/shieldse/storage/ML/trackingData/transformed_data/"
+      "/srv01/agrp/shieldse/storage/ml/trackingData/transformed_data/"
       "module_map/"
       "df_MMTriplet_3hits_ptCut1GeV_woutSec_woutOC_90kevents_woutElectron.csv"};
-  std::string mm_pairs_path{"/srv01/agrp/shieldse/storage/ML/trackingData/"
+  std::string mm_pairs_path{"/srv01/agrp/shieldse/storage/ml/trackingData/"
                             "transformed_data/module_map/"
                             "df_MMTriplet_3hits_ptCut1GeV_woutSec_woutOC_"
                             "90kevents_woutElectron_pairs.csv"};
@@ -99,6 +117,8 @@ int main(int argc, char *argv[]) {
   CUDA_CHECK();
 
   graph_builder(mm, event);
+
+  //graph_builder_baseline(mm, event);
 
   cudaProfilerStop();
 }

@@ -17,6 +17,23 @@ __global__ void DeviceCalculateHitPairs(unsigned n_mod_pairs,
   }
 }
 
+__global__ void DeviceCalculateHitTriplets(unsigned n_mod_triplets,
+                                           ModuleTriplet *d_mod_triplets,
+                                           unsigned *d_hit_offsets,
+                                           unsigned *d_hit_triplets_offsets) {
+  for (int i = blockIdx.x; i < n_mod_triplets; i += gridDim.x) {
+    unsigned mod1 = d_mod_triplets[i].module_a;
+    unsigned mod2 = d_mod_triplets[i].module_b;
+    unsigned mod3 = d_mod_triplets[i].module_c;
+
+    unsigned n_hits_mod1 = d_hit_offsets[mod1 + 1] - d_hit_offsets[mod1];
+    unsigned n_hits_mod2 = d_hit_offsets[mod2 + 1] - d_hit_offsets[mod2];
+    unsigned n_hits_mod3 = d_hit_offsets[mod3 + 1] - d_hit_offsets[mod3];
+
+    d_hit_triplets_offsets[i] = n_hits_mod1 * n_hits_mod2 * n_hits_mod3;
+  }
+}
+
 __global__ void DeviceInitHitPairs(unsigned n_mod_pairs,
                                    ModuleDoublet *d_mod_doublets,
                                    unsigned *d_hit_offsets,
@@ -61,8 +78,10 @@ ModuleMap::ModuleMap(std::string mm_path_arg, std::string mm_pairs_path) {
   std::string mm_line;
   std::string delim = " ";
 
-  std::vector<unsigned int> m_ids;
+  std::vector<unsigned> m_ids;
   m_ids.resize(2);
+  std::vector<float> m_cuts;
+  m_cuts.resize(10);
   /*********************************
   / Module doublets
   *********************************/
@@ -73,21 +92,29 @@ ModuleMap::ModuleMap(std::string mm_path_arg, std::string mm_pairs_path) {
       auto start = 0U;
       auto end = mm_line.find(delim);
 
-      for (int i = 0; i < 2; i++) {
-        int m_id = std::stoi(mm_line.substr(start, end - start));
-        m_ids[i] = m_id;
-
+      for (int i = 0; i < 10; i++) {
+        if (i < 2) {
+          int m_id = std::stoi(mm_line.substr(start, end - start));
+          m_ids[i] = m_id;
+        } else if (i < 10) {
+          float m_cut = std::stof(mm_line.substr(start, end - start));
+          m_cuts[i] = m_cut;
+        }
         start = end + delim.length();
         end = mm_line.find(delim, start);
       }
 
-      h_mod_doublets.push_back({m_ids[0], m_ids[1]});
+      ModuleDoublet m_doublet{m_ids[0],  m_ids[1],  m_cuts[3], m_cuts[4],
+                              m_cuts[5], m_cuts[4], m_cuts[7], m_cuts[6],
+                              m_cuts[9], m_cuts[8]};
+      h_mod_doublets.push_back(m_doublet);
     }
     mm_pairs_file.close();
   }
   std::cout << "Formed module doublets" << std::endl;
 
   m_ids.resize(5);
+  m_cuts.resize(26);
   /*********************************
   / Module triplets
   *********************************/
@@ -109,14 +136,20 @@ ModuleMap::ModuleMap(std::string mm_path_arg, std::string mm_pairs_path) {
         } else if (i == 25) {
           int m_id = std::stoi(mm_line.substr(start, end - start));
           m_ids[4] = m_id;
+        } else {
+          float m_cut = std::stof(mm_line.substr(start, end - start));
+          m_cuts[i] = m_cut;
         }
         start = end + delim.length();
         end = mm_line.find(delim, start);
       }
 
       ModuleTriplet trip{
-          m_ids[0], m_ids[1], m_ids[2], m_ids[3], m_ids[4],
-      };
+          m_ids[0],   m_ids[1],   m_ids[2],   m_ids[3],   m_ids[4],
+          m_cuts[4],  m_cuts[5],  m_cuts[6],  m_cuts[7],  m_cuts[8],
+          m_cuts[9],  m_cuts[10], m_cuts[11], m_cuts[12], m_cuts[13],
+          m_cuts[14], m_cuts[15], m_cuts[16], m_cuts[17], m_cuts[18],
+          m_cuts[19], m_cuts[20], m_cuts[21], m_cuts[22], m_cuts[23]};
       h_mod_triplets.push_back(trip);
     }
     mm_file.close();
@@ -182,6 +215,8 @@ EventData::EventData(std::string event_path_arg, ModuleMap &mm,
     col_entries.reserve(15);
     h_hit_offsets.resize(
         ModuleMap::num_modules()); // Resize with number of modules
+    float x;
+    float y;
     while (getline(event_file, hit_line)) {
 
       // boost::split(col_entries, hit_line, boost::is_any_of(", "),
@@ -203,6 +238,9 @@ EventData::EventData(std::string event_path_arg, ModuleMap &mm,
       hit.x = std::stof(col_entries.at(1));
       hit.y = std::stof(col_entries.at(2));
       hit.z = std::stof(col_entries.at(3));
+      hit.eta = Eta(hit.x, hit.y, hit.z);
+      hit.phi = Phi(hit.x, hit.y);
+      hit.r = R(hit.x, hit.y);
       h_hits.push_back(hit);
       unsigned mod = std::stoi(col_entries.back());
       if (mod >= ModuleMap::num_modules())
@@ -341,7 +379,7 @@ EventData::EventData(std::string event_path_arg, ModuleMap &mm,
 
   MemoryScheduler::allocate(&d_ptrs.hit_sum, total);
 
-  MemoryScheduler::free(&d_total);
+  // MemoryScheduler::free(&d_total);
 
   dim3 grid_dim(65535);
   dim3 block_dim(32, 32);
@@ -350,6 +388,35 @@ EventData::EventData(std::string event_path_arg, ModuleMap &mm,
       d_ptrs.hit_pairs_offsets, d_ptrs.hits_a, d_ptrs.hits_b);
 
   MemoryScheduler::allocate(&d_ptrs.hit_module_sum, ModuleMap::num_doublets());
+
+  unsigned *d_hit_triplets_offsets;
+  MemoryScheduler::allocate(&d_hit_triplets_offsets, ModuleMap::num_triplets());
+  MemoryScheduler::memset(&d_hit_triplets_offsets, ModuleMap::num_triplets(),
+                          (unsigned)0);
+
+  DeviceCalculateHitTriplets<<<65535, 1>>>(ModuleMap::num_triplets(),
+                                           *mm.d_triplets(), d_ptrs.hit_offsets,
+                                           d_hit_triplets_offsets);
+
+  cudaDeviceSynchronize();
+  unsigned *d_hit_triplets_sum;
+  MemoryScheduler::allocate(&d_hit_triplets_sum, ModuleMap::num_triplets() + 1);
+  MemoryScheduler::memset(&d_hit_triplets_sum, ModuleMap::num_triplets() + 1,
+                          (unsigned)0);
+
+  PrefixSum(&d_hit_triplets_offsets, &d_hit_triplets_sum,
+            ModuleMap::num_triplets());
+
+  cudaDeviceSynchronize();
+
+  // Get the total number of hit triplets
+  getMax<<<1, 1>>>(d_total, ModuleMap::num_triplets(), &d_hit_triplets_sum[1]);
+
+  cudaDeviceSynchronize();
+
+  CUDA_WARN(cudaMemcpy(&n_hit_triplets, d_total, sizeof(unsigned),
+                       cudaMemcpyDeviceToHost));
+  cudaDeviceSynchronize();
 }
 
 void EventData::print_summary() {
@@ -365,6 +432,7 @@ void EventData::print_summary() {
 
   std::cout << "# hits: " << n_hits << std::endl;
   std::cout << "# hit pairs: " << n_hit_pairs << std::endl;
+  std::cout << "# hit triplets: " << n_hit_triplets << std::endl;
 
   std::cout << std::string(50, '-') << std::endl;
 }
