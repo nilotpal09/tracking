@@ -1,9 +1,8 @@
-#ifndef UTILITY_H
-#define UTILITY_H
+#ifndef __UTILS__
+#define __UTILS__
 
-// cub
-#include <cstdio>
-#include <vector>
+#include <iostream>
+#include <cuda_profiler_api.h>
 #include <cub/cub.cuh>
 
 #define CUDA_WARN(XXX)                                                         \
@@ -26,10 +25,6 @@
     }                                                                          \
   } while (0)
 
-#define DEBUG(XXX)                                                             \
-  do {                                                                         \
-    assert(XXX);                                                               \
-  } while (0)
 
 template <typename T>
 inline void PrefixSum(T **d_in, T **d_out, unsigned size) {
@@ -58,7 +53,6 @@ inline void PrefixSum(T **d_in, T **d_out, unsigned size) {
   CUDA_WARN(cudaFree(d_temp_storage));
 }
 
-void test_PrefixSum();
 
 template <typename K, typename V>
 inline void Sort(K **d_keys_in, V **d_values_in, K **d_keys_out,
@@ -80,7 +74,6 @@ inline void Sort(K **d_keys_in, V **d_values_in, K **d_keys_out,
   cudaDeviceSynchronize();
 }
 
-void test_Sort();
 
 template <typename F, typename V>
 inline void ReduceFlagged(F **d_flags_in, V **d_values_in, V **d_values_out,
@@ -106,15 +99,10 @@ inline void ReduceFlagged(F **d_flags_in, V **d_values_in, V **d_values_out,
   cudaFree(d_temp_storage);
 }
 
-void test_ReduceFlagged();
-
 template <typename T> unsigned getMax(T **d_in, unsigned size) {
   unsigned h_max;
   cudaMemcpy(&h_max, &((*d_in)[size]), sizeof(T), cudaMemcpyDeviceToHost);
-  std::cout << "Max: " << h_max << std::endl;
   return h_max;
 }
-
-unsigned findPairIndex(unsigned a, unsigned b, std::vector<unsigned>& offsets, std::vector<unsigned>& indices);
 
 #endif

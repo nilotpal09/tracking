@@ -1,10 +1,30 @@
 #include "../include/datatypes.cuh"
 
+__device__ unsigned long long counter5 = 0;
+
+__global__ void print_counter5() { printf("Counter5: %ld \n", counter5); }
+
+__host__ float h_Phi(const float &x, const float &y) {
+  return atan2(y, x);
+}
+
+__host__ float h_R(const float &x, const float &y) {
+  return sqrtf(x * x + y * y);
+}
+
+__host__ float h_Eta(const float &x, const float &y, const float &z) {
+  float r = h_R(x, y);
+  float r3 = sqrtf(r * r + z * z);
+  float theta = acos(z / r3);
+
+  return -log(tan(theta * 0.5));
+}
+
 __global__ void DeviceCalculateHitPairs(unsigned n_mod_pairs,
                                         ModuleDoublet *d_mod_doublets,
                                         unsigned *d_hit_offsets,
-                                        unsigned *d_hit_pairs_offsets,
-                                        unsigned *d_hit_sum_offsets) {
+                                        unsigned *d_n_hit_pairs,
+                                        unsigned *d_n_hits_a) {
   for (int i = blockIdx.x; i < n_mod_pairs; i += gridDim.x) {
     unsigned mod1 = d_mod_doublets[i].module_a;
     unsigned mod2 = d_mod_doublets[i].module_b;
@@ -12,16 +32,16 @@ __global__ void DeviceCalculateHitPairs(unsigned n_mod_pairs,
     unsigned n_hits_mod1 = d_hit_offsets[mod1 + 1] - d_hit_offsets[mod1];
     unsigned n_hits_mod2 = d_hit_offsets[mod2 + 1] - d_hit_offsets[mod2];
 
-    d_hit_sum_offsets[i] = n_hits_mod1 + 1;
-    d_hit_pairs_offsets[i] = n_hits_mod1 * n_hits_mod2;
+    d_n_hits_a[i] = n_hits_mod1 + 1;
+    d_n_hit_pairs[i] = n_hits_mod1 * n_hits_mod2;
   }
 }
 
 __global__ void DeviceCalculateHitTriplets(unsigned n_mod_triplets,
                                            ModuleTriplet *d_mod_triplets,
                                            unsigned *d_hit_offsets,
-                                           unsigned *d_hit_triplets_offsets) {
-  for (int i = blockIdx.x; i < n_mod_triplets; i += gridDim.x) {
+                                           unsigned long long *d_hit_triplets_offsets) {
+  for (unsigned i = blockIdx.x; i < n_mod_triplets; i += gridDim.x) {
     unsigned mod1 = d_mod_triplets[i].module_a;
     unsigned mod2 = d_mod_triplets[i].module_b;
     unsigned mod3 = d_mod_triplets[i].module_c;
@@ -31,6 +51,7 @@ __global__ void DeviceCalculateHitTriplets(unsigned n_mod_triplets,
     unsigned n_hits_mod3 = d_hit_offsets[mod3 + 1] - d_hit_offsets[mod3];
 
     d_hit_triplets_offsets[i] = n_hits_mod1 * n_hits_mod2 * n_hits_mod3;
+    atomicAdd(&counter5, n_hits_mod1 * n_hits_mod2 * n_hits_mod3);
   }
 }
 
@@ -62,12 +83,6 @@ __global__ void DeviceInitHitPairs(unsigned n_mod_pairs,
   }
 }
 
-__global__ void getMax(unsigned *max, unsigned n_mod_pairs,
-                       unsigned *d_hit_pairs_offsets) {
-  *max = d_hit_pairs_offsets[n_mod_pairs - 1];
-  printf("Max: %d \n", *max);
-}
-
 ModuleMap::ModuleMap(std::string mm_path_arg, std::string mm_pairs_path) {
 
   h_mod_doublets.reserve(ModuleMap::num_doublets());
@@ -82,6 +97,10 @@ ModuleMap::ModuleMap(std::string mm_path_arg, std::string mm_pairs_path) {
   m_ids.resize(2);
   std::vector<float> m_cuts;
   m_cuts.resize(10);
+  std::vector<unsigned> m_pairs_sum;
+  std::vector<unsigned> m_idx_b;
+  m_pairs_sum.resize(num_modules());
+  m_idx_b.reserve(num_doublets());
   /*********************************
   / Module doublets
   *********************************/
@@ -104,14 +123,25 @@ ModuleMap::ModuleMap(std::string mm_path_arg, std::string mm_pairs_path) {
         end = mm_line.find(delim, start);
       }
 
-      ModuleDoublet m_doublet{m_ids[0],  m_ids[1],  m_cuts[3], m_cuts[4],
+      ModuleDoublet m_doublet{m_ids[0],  m_ids[1],  m_cuts[3], m_cuts[2],
                               m_cuts[5], m_cuts[4], m_cuts[7], m_cuts[6],
                               m_cuts[9], m_cuts[8]};
       h_mod_doublets.push_back(m_doublet);
+      m_pairs_sum[m_ids[0]] += 1;
+      m_idx_b.push_back(m_ids[1]);
     }
     mm_pairs_file.close();
+  } else {
+    std::cout << "Unable to open file" << mm_pairs_path << std::endl;
   }
   std::cout << "Formed module doublets" << std::endl;
+
+  // Prefix sum m_pairs_sum
+  for (int i = 1; i < num_modules(); i++) {
+    m_pairs_sum[i] += m_pairs_sum[i - 1];
+  }
+  // Add zero to the beginning
+  m_pairs_sum.insert(m_pairs_sum.begin(), 0);
 
   m_ids.resize(5);
   m_cuts.resize(26);
@@ -143,9 +173,13 @@ ModuleMap::ModuleMap(std::string mm_path_arg, std::string mm_pairs_path) {
         start = end + delim.length();
         end = mm_line.find(delim, start);
       }
+      unsigned pair_i = findPairIndex(m_ids[0], m_ids[1], m_pairs_sum, m_idx_b);
+      unsigned pair_j = findPairIndex(m_ids[1], m_ids[2], m_pairs_sum, m_idx_b);
+
+      //std::cout << "i: " << m_ids[0] << " j: " << m_ids[1] << " k: " << m_ids[2] << " pair_i: " << pair_i << " pair_j: " << pair_j << std::endl;
 
       ModuleTriplet trip{
-          m_ids[0],   m_ids[1],   m_ids[2],   m_ids[3],   m_ids[4],
+          m_ids[0],   m_ids[1],   m_ids[2],   pair_i,   pair_j,
           m_cuts[4],  m_cuts[5],  m_cuts[6],  m_cuts[7],  m_cuts[8],
           m_cuts[9],  m_cuts[10], m_cuts[11], m_cuts[12], m_cuts[13],
           m_cuts[14], m_cuts[15], m_cuts[16], m_cuts[17], m_cuts[18],
@@ -153,6 +187,8 @@ ModuleMap::ModuleMap(std::string mm_path_arg, std::string mm_pairs_path) {
       h_mod_triplets.push_back(trip);
     }
     mm_file.close();
+  } else {
+    std::cout << "Unable to open file" << mm_path << std::endl;
   }
   std::cout << "Formed module triplets" << std::endl;
 
@@ -212,7 +248,7 @@ EventData::EventData(std::string event_path_arg, ModuleMap &mm,
     getline(event_file, hit_line);
 
     std::vector<std::string> col_entries;
-    col_entries.reserve(15);
+    col_entries.reserve(27);
     h_hit_offsets.resize(
         ModuleMap::num_modules()); // Resize with number of modules
     float x;
@@ -232,15 +268,14 @@ EventData::EventData(std::string event_path_arg, ModuleMap &mm,
         end = hit_line.find(delim, start);
       }
       col_entries.push_back(hit_line.substr(start, end - start));
-
       Hit hit;
       // Need to optimize this into one memory copy
-      hit.x = std::stof(col_entries.at(1));
-      hit.y = std::stof(col_entries.at(2));
-      hit.z = std::stof(col_entries.at(3));
-      hit.eta = Eta(hit.x, hit.y, hit.z);
-      hit.phi = Phi(hit.x, hit.y);
-      hit.r = R(hit.x, hit.y);
+      hit.x = std::stof(col_entries.at(2));
+      hit.y = std::stof(col_entries.at(3));
+      hit.z = std::stof(col_entries.at(4));
+      hit.eta = h_Eta(hit.x, hit.y, hit.z);
+      hit.phi = h_Phi(hit.x, hit.y);
+      hit.r = h_R(hit.x, hit.y);
       h_hits.push_back(hit);
       unsigned mod = std::stoi(col_entries.back());
       if (mod >= ModuleMap::num_modules())
@@ -273,6 +308,8 @@ EventData::EventData(std::string event_path_arg, ModuleMap &mm,
 
   Sort(&d_hit_inds, &d_hits, &d_hit_ind_out, &d_ptrs.hits, n_hits);
 
+  DEBUG(test_hit_sort(&d_hit_ind_out, n_hits));
+
   MemoryScheduler::free(&d_hit_inds);
   MemoryScheduler::free(&d_hits);
   MemoryScheduler::free(&d_hit_ind_out);
@@ -291,15 +328,17 @@ EventData::EventData(std::string event_path_arg, ModuleMap &mm,
 
   PrefixSum(&d_hit_offsets, &d_ptrs.hit_offsets, ModuleMap::num_modules());
 
+  DEBUG(test_hit_offsets(h_hit_offsets, &d_ptrs.hit_offsets, ModuleMap::num_modules()));
+
   MemoryScheduler::free(&d_hit_offsets);
 
   /*
       Calculate Hit Pairs
   */
-  unsigned *d_hit_pairs_offsets;
-  MemoryScheduler::allocate(&d_hit_pairs_offsets, ModuleMap::num_doublets());
-  unsigned *d_hit_sum_offsets;
-  MemoryScheduler::allocate(&d_hit_sum_offsets, ModuleMap::num_doublets());
+  unsigned *d_n_hit_pairs; // Number of hit pairs per doublet
+  MemoryScheduler::allocate(&d_n_hit_pairs, ModuleMap::num_doublets());
+  unsigned *d_n_hit_a; // Number of hits in first module of doublet
+  MemoryScheduler::allocate(&d_n_hit_a, ModuleMap::num_doublets());
 
   CUDA_CHECK();
 
@@ -307,7 +346,7 @@ EventData::EventData(std::string event_path_arg, ModuleMap &mm,
   // By like a factor of 5
   DeviceCalculateHitPairs<<<65535, 1>>>(ModuleMap::num_doublets(),
                                         *mm.d_doublets(), d_ptrs.hit_offsets,
-                                        d_hit_pairs_offsets, d_hit_sum_offsets);
+                                        d_n_hit_pairs, d_n_hit_a);
 
   CUDA_CHECK();
 
@@ -322,10 +361,12 @@ EventData::EventData(std::string event_path_arg, ModuleMap &mm,
   MemoryScheduler::memset(&d_ptrs.hit_pairs_offsets,
                           ModuleMap::num_doublets() + 1, (unsigned)0);
 
-  PrefixSum(&d_hit_pairs_offsets, &d_ptrs.hit_pairs_offsets,
+  PrefixSum(&d_n_hit_pairs, &d_ptrs.hit_pairs_offsets,
             ModuleMap::num_doublets());
 
-  MemoryScheduler::free(&d_hit_pairs_offsets);
+  DEBUG(test_hit_pairs_offsets(&d_n_hit_pairs, &d_ptrs.hit_pairs_offsets, ModuleMap::num_doublets()));
+
+  MemoryScheduler::free(&d_n_hit_pairs);
 
   CUDA_CHECK();
   cudaDeviceSynchronize();
@@ -339,28 +380,20 @@ EventData::EventData(std::string event_path_arg, ModuleMap &mm,
   MemoryScheduler::memset(&d_ptrs.hit_sum_offsets,
                           ModuleMap::num_doublets() + 1, (unsigned)0);
 
-  PrefixSum(&d_hit_sum_offsets, &d_ptrs.hit_sum_offsets,
+  PrefixSum(&d_n_hit_a, &d_ptrs.hit_sum_offsets,
             ModuleMap::num_doublets());
 
-  MemoryScheduler::free(&d_hit_sum_offsets);
+  DEBUG(test_hit_sum_offsets(&d_n_hit_a, &d_ptrs.hit_sum_offsets, ModuleMap::num_doublets()));
+
+  MemoryScheduler::free(&d_n_hit_a);
 
   CUDA_CHECK();
   cudaDeviceSynchronize();
 
-  unsigned total = 0;
-  unsigned *d_total;
-  MemoryScheduler::allocate(&d_total, 1);
-  CUDA_WARN(
-      cudaMemcpy(d_total, &total, sizeof(unsigned), cudaMemcpyHostToDevice));
-
-  CUDA_CHECK();
-
-  getMax<<<1, 1>>>(d_total, ModuleMap::num_doublets(),
-                   &d_ptrs.hit_pairs_offsets[1]);
+  n_hit_pairs = getMax(&d_ptrs.hit_pairs_offsets, ModuleMap::num_doublets());
 
   cudaDeviceSynchronize();
-  CUDA_WARN(cudaMemcpy(&n_hit_pairs, d_total, sizeof(unsigned),
-                       cudaMemcpyDeviceToHost));
+
 
   MemoryScheduler::allocate(&d_ptrs.hit_pairs, n_hit_pairs);
   MemoryScheduler::allocate(&d_ptrs.hits_a, n_hit_pairs);
@@ -369,13 +402,9 @@ EventData::EventData(std::string event_path_arg, ModuleMap &mm,
   MemoryScheduler::allocate(&d_ptrs.hits_a_reduced, n_hit_pairs);
   MemoryScheduler::allocate(&d_ptrs.hits_b_reduced, n_hit_pairs);
 
-  getMax<<<1, 1>>>(d_total, ModuleMap::num_doublets(),
-                   &d_ptrs.hit_sum_offsets[1]);
+  unsigned total = getMax(&d_ptrs.hit_sum_offsets, ModuleMap::num_doublets());
 
   cudaDeviceSynchronize();
-
-  CUDA_WARN(
-      cudaMemcpy(&total, d_total, sizeof(unsigned), cudaMemcpyDeviceToHost));
 
   MemoryScheduler::allocate(&d_ptrs.hit_sum, total);
 
@@ -389,33 +418,32 @@ EventData::EventData(std::string event_path_arg, ModuleMap &mm,
 
   MemoryScheduler::allocate(&d_ptrs.hit_module_sum, ModuleMap::num_doublets());
 
-  unsigned *d_hit_triplets_offsets;
+  unsigned long long *d_hit_triplets_offsets;
   MemoryScheduler::allocate(&d_hit_triplets_offsets, ModuleMap::num_triplets());
   MemoryScheduler::memset(&d_hit_triplets_offsets, ModuleMap::num_triplets(),
-                          (unsigned)0);
+                          (unsigned long long)0);
 
   DeviceCalculateHitTriplets<<<65535, 1>>>(ModuleMap::num_triplets(),
                                            *mm.d_triplets(), d_ptrs.hit_offsets,
                                            d_hit_triplets_offsets);
 
   cudaDeviceSynchronize();
-  unsigned *d_hit_triplets_sum;
+  unsigned long long *d_hit_triplets_sum;
   MemoryScheduler::allocate(&d_hit_triplets_sum, ModuleMap::num_triplets() + 1);
   MemoryScheduler::memset(&d_hit_triplets_sum, ModuleMap::num_triplets() + 1,
-                          (unsigned)0);
+                          (unsigned long long)0);
 
   PrefixSum(&d_hit_triplets_offsets, &d_hit_triplets_sum,
             ModuleMap::num_triplets());
 
   cudaDeviceSynchronize();
 
+  print_counter5<<<1,1>>>();
+
   // Get the total number of hit triplets
-  getMax<<<1, 1>>>(d_total, ModuleMap::num_triplets(), &d_hit_triplets_sum[1]);
-
-  cudaDeviceSynchronize();
-
-  CUDA_WARN(cudaMemcpy(&n_hit_triplets, d_total, sizeof(unsigned),
-                       cudaMemcpyDeviceToHost));
+  n_hit_triplets = getMax(&d_hit_triplets_sum, ModuleMap::num_triplets());
+  
+  print_counter5<<<1,1>>>();
   cudaDeviceSynchronize();
 }
 
@@ -443,4 +471,84 @@ void EventData::allocate_device_memory_hits(unsigned n_hits) {
   MemoryScheduler::allocate(&d_ptrs.hit_module_sum, ModuleMap::num_doublets());
   MemoryScheduler::allocate(&d_ptrs.hit_module_offsets,
                             ModuleMap::num_doublets() + 1);
+}
+
+bool EventData::test_hit_sort(unsigned** d_hit_ind, unsigned n_hits) {
+  unsigned *h_hit_ind = new unsigned[n_hits];
+
+  CUDA_WARN(cudaMemcpy(h_hit_ind, *d_hit_ind, n_hits * sizeof(unsigned),
+                       cudaMemcpyDeviceToHost));
+
+  for (unsigned i = 0; i < n_hits - 1; i++) {
+    if (h_hit_ind[i] > h_hit_ind[i + 1]) {
+      std::cout << "\033[31m" << "Hit sort failed at " << i << "\033[0m" << std::endl;
+      return false;
+    }
+  }
+
+  delete[] h_hit_ind;
+  std::cout << "\033[32m" << "Hit sort passed" << "\033[0m" << std::endl;
+  return true;
+}
+
+bool EventData::test_hit_offsets(std::vector<unsigned>& h_hit_offsets, unsigned** d_hit_offsets, unsigned n_modules) {
+  unsigned *h_hit_offsets_host = new unsigned[n_modules + 1];
+
+  CUDA_WARN(cudaMemcpy(h_hit_offsets_host, *d_hit_offsets, (n_modules + 1) * sizeof(unsigned),
+                       cudaMemcpyDeviceToHost));
+
+  for (unsigned i = 0; i < n_modules; i++) {
+    if (h_hit_offsets_host[i + 1] - h_hit_offsets_host[i] != h_hit_offsets[i]) {
+      std::cout << "\033[31m" << "Hit offsets failed at " << i << "\033[0m" << std::endl;
+      return false;
+    }
+  }
+
+  delete[] h_hit_offsets_host;
+  std::cout << "\033[32m" << "Hit offsets passed" << "\033[0m" << std::endl;
+  return true;
+}
+
+bool EventData::test_hit_pairs_offsets(unsigned** d_n_hit_pairs, unsigned** d_hit_pairs_offsets, unsigned num_doublets) {
+  unsigned *h_n_hit_pairs = new unsigned[num_doublets];
+  unsigned *h_hit_pairs_offsets = new unsigned[num_doublets + 1];
+
+  CUDA_WARN(cudaMemcpy(h_n_hit_pairs, *d_n_hit_pairs, num_doublets * sizeof(unsigned),
+                       cudaMemcpyDeviceToHost));
+  CUDA_WARN(cudaMemcpy(h_hit_pairs_offsets, *d_hit_pairs_offsets, (num_doublets + 1) * sizeof(unsigned),
+                       cudaMemcpyDeviceToHost));
+
+  for (unsigned i = 0; i < num_doublets; i++) {
+    if (h_hit_pairs_offsets[i + 1] - h_hit_pairs_offsets[i] != h_n_hit_pairs[i]) {
+      std::cout << "\033[31m" << "Hit pairs offsets failed at " << i << "\033[0m" << std::endl;
+      return false;
+    }
+  }
+
+  delete[] h_n_hit_pairs;
+  delete[] h_hit_pairs_offsets;
+  std::cout << "\033[32m" << "Hit pairs offsets passed" << "\033[0m" << std::endl;
+  return true;
+}
+
+bool EventData::test_hit_sum_offsets(unsigned** d_n_hit_a, unsigned** d_hit_sum_offsets, unsigned num_doublets) {
+  unsigned *h_n_hit_a = new unsigned[num_doublets];
+  unsigned *h_hit_sum_offsets = new unsigned[num_doublets + 1];
+
+  CUDA_WARN(cudaMemcpy(h_n_hit_a, *d_n_hit_a, num_doublets * sizeof(unsigned),
+                       cudaMemcpyDeviceToHost));
+  CUDA_WARN(cudaMemcpy(h_hit_sum_offsets, *d_hit_sum_offsets, (num_doublets + 1) * sizeof(unsigned),
+                       cudaMemcpyDeviceToHost));
+
+  for (unsigned i = 0; i < num_doublets; i++) {
+    if (h_hit_sum_offsets[i + 1] - h_hit_sum_offsets[i] != h_n_hit_a[i]) {
+      std::cout << "\033[31m" << "Hit sum offsets failed at " << i << "\033[0m" << std::endl;
+      return false;
+    }
+  }
+
+  delete[] h_n_hit_a;
+  delete[] h_hit_sum_offsets;
+  std::cout << "\033[32m" << "Hit sum offsets passed" << "\033[0m" << std::endl;
+  return true;
 }

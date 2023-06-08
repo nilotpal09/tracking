@@ -3,6 +3,7 @@
 
 #include "../include/memoryscheduler.cuh"
 #include "../include/utility.cuh"
+#include "../include/selection.cuh"
 
 #include <algorithm>
 #include <fstream>
@@ -17,6 +18,12 @@
 // print numbers with formatting
 #include <iomanip>
 #include <locale>
+
+__global__ void print_counter5();
+
+__host__ float h_Phi(const float &x, const float &y);
+__host__ float h_R(const float &x, const float &y);
+__host__ float h_Eta(const float &x, const float &y, const float &z);
 
 struct ModuleTriplet {
   unsigned module_a;
@@ -54,14 +61,14 @@ struct ModuleDoublet {
   unsigned module_a;
   unsigned module_b;
 
-  float z0_max;
   float z0_min;
-  float dphi_max;
+  float z0_max;
   float dphi_min;
-  float phi_slope_max;
+  float dphi_max;
   float phi_slope_min;
-  float deta_max;
+  float phi_slope_max;
   float deta_min;
+  float deta_max;
 };
 
 __global__ void DeviceCalculateHitPairs(unsigned n_mod_pairs,
@@ -73,7 +80,7 @@ __global__ void DeviceCalculateHitPairs(unsigned n_mod_pairs,
 __global__ void DeviceCalculateHitTriplets(unsigned n_mod_triplets,
                                            ModuleTriplet *d_mod_triplets,
                                            unsigned *d_hit_pairs_offsets,
-                                           unsigned *d_hit_triplets_offsets);
+                                           unsigned long long *d_hit_triplets_offsets);
 
 __global__ void DeviceInitHitPairs(unsigned n_mod_pairs,
                                    ModuleDoublet *d_mod_doublets,
@@ -130,9 +137,9 @@ struct Hit {
   float x;
   float y;
   float z;
-  float eta;
-  float phi;
   float r;
+  float phi;
+  float eta;
 };
 
 class EventData {
@@ -163,7 +170,7 @@ private:
   std::vector<unsigned> h_hit_pairs_offsets;
   unsigned n_hits;
   unsigned n_hit_pairs;
-  unsigned n_hit_triplets;
+  unsigned long long n_hit_triplets;
 
   void allocate_device_memory_hits(unsigned n_hits);
 
@@ -201,6 +208,17 @@ public:
   unsigned **d_hit_module_sum() { return &d_ptrs.hit_module_sum; }
 
   unsigned **d_hit_module_offsets() { return &d_ptrs.hit_module_offsets; }
+
+private:
+  // Tests
+  bool test_hit_sort(unsigned **d_hit_ind, unsigned n_hits);
+  bool test_hit_offsets(std::vector<unsigned> &h_hit_offsets,
+                        unsigned **d_hit_offsets, unsigned n_modules);
+  bool test_hit_pairs_offsets(unsigned **d_n_hit_pairs,
+                              unsigned **d_hit_pairs_offsets,
+                              unsigned num_doublets);
+  bool test_hit_sum_offsets(unsigned **d_n_hit_a, unsigned **d_hit_sum_offsets,
+                            unsigned num_doublets);
 };
 
 #endif

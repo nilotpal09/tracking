@@ -5,6 +5,7 @@ import sys
 import glob
 from tqdm import tqdm
 import pdb
+from collections import OrderedDict
 
 def convert_mm():
     mm_path  = '/storage/agrp/nilotpal/tracking/raw_data/df_MMTriplet_3hits_ptCut1GeV_woutSec_woutOC_90kevents_woutElectron.txt'
@@ -34,13 +35,20 @@ def convert_mm():
     #int2hash_dict = {i: hash_i for hash_i, i in hash2int_dict.items()}
 
     # save it for later usage
-    #with open('transformed_data/module_map/hash2int_dict.pkl', 'wb') as f:
-    #    pickle.dump(hash2int_dict, f)
-
+    with open('/srv01/agrp/shieldse/storage/ml/trackingData/transformed_data/module_map/hash2int_dict.pkl', 'wb') as f:
+        pickle.dump(hash2int_dict, f)
+    print('Dumped hashmap')
     # update the module indices
     df['module1'] = df['module1'].map(hash2int_dict) 
     df['module2'] = df['module2'].map(hash2int_dict) 
     df['module3'] = df['module3'].map(hash2int_dict)
+
+    df.sort_values(by=['module1', 'module2', 'module3'], inplace=True)
+
+    # save the new module map
+    new_mm_path = f'/srv01/agrp/shieldse/storage/ml/trackingData/transformed_data/module_map/{map_name}.csv'
+    df.to_csv(new_mm_path, sep=" ", index=False, header=False)
+    print('Saved new module map to ', new_mm_path)
 
     '''
     Create unique doublets
@@ -56,41 +64,40 @@ def convert_mm():
     module_pairs_mapped = {name: l for name, l in zip(dict_names, tup)}
     module_pairs_mapped.update({name: [] for name in dict_names[2:]})
 
-    #for i1, i2 in zip(module_pairs_mapped['module1'], module_pairs_mapped['module2']):
-    #    df_unique = df[((df['module1'] == i1) & (df['module2'] == i2)) | ((df['module2'] == i1) & (df['module3'] == i2))]
-    #    module_pairs_mapped['z0min'].append(df_unique['z0min_12'].min())
-    #    module_pairs_mapped['z0max'].append(df_unique['z0max_12'].max())
-    #    module_pairs_mapped['dphimin'].append(df_unique['dphimin_12'].min())
-    #    module_pairs_mapped['dphimax'].append(df_unique['dphimax_12'].max())
-    #    module_pairs_mapped['phiSlopemin'].append(df_unique['phiSlopemin_12'].min())
-    #    module_pairs_mapped['phiSlopemax'].append(df_unique['phiSlopemax_12'].max())
-    #    module_pairs_mapped['detamin'].append(df_unique['detamin_12'].min())
-    #    module_pairs_mapped['detamax'].append(df_unique['detamax_12'].max())
 
+    for i1, i2 in zip(module_pairs_mapped['module1'], module_pairs_mapped['module2']):
+        df_unique = df[((df['module1'] == i1) & (df['module2'] == i2)) | ((df['module2'] == i1) & (df['module3'] == i2))]
+        module_pairs_mapped['z0min'].append(min(df_unique['z0min_12'].min(), df_unique['z0min_23'].min()))
+        module_pairs_mapped['z0max'].append(max(df_unique['z0max_12'].max(), df_unique['z0max_23'].max()))
+        module_pairs_mapped['dphimin'].append(min(df_unique['dphimin_12'].min(), df_unique['dphimin_23'].min()))
+        module_pairs_mapped['dphimax'].append(max(df_unique['dphimax_12'].max(), df_unique['dphimax_23'].max()))
+        module_pairs_mapped['phiSlopemin'].append(min(df_unique['phiSlopemin_12'].min(), df_unique['phiSlopemin_23'].min()))
+        module_pairs_mapped['phiSlopemax'].append(max(df_unique['phiSlopemax_12'].max(), df_unique['phiSlopemax_23'].max()))
+        module_pairs_mapped['detamin'].append(min(df_unique['detamin_12'].min(), df_unique['detamin_23'].min()))
+        module_pairs_mapped['detamax'].append(max(df_unique['detamax_12'].max(), df_unique['detamax_23'].max()))
 
+    
     # save it for later usage
     #with open('transformed_data/module_map/hash2int_dict.pkl', 'wb') as f:
     #    pickle.dump(hash2int_dict, f)
 
     
     # update the module indices
-    df['module1'] = df['module1'].map(hash2int_dict) 
-    df['module2'] = df['module2'].map(hash2int_dict) 
-    df['module3'] = df['module3'].map(hash2int_dict)
+    #df['module1'] = df['module1'].map(hash2int_dict) 
+    #df['module2'] = df['module2'].map(hash2int_dict) 
+    #df['module3'] = df['module3'].map(hash2int_dict)
 
-    pairs = list(zip(module_pairs_mapped['module1'], module_pairs_mapped['module2']))
+    #pairs = list(zip(module_pairs_mapped['module1'], module_pairs_mapped['module2']))   
 
-    df['pair_a'] = list(pairs.index(p) for p in zip(df['module1'], df['module2']))
-    df['pair_b'] = list(pairs.index(p) for p in zip(df['module2'], df['module3']))
- 
-    # save the new module map
-    new_mm_path = f'/srv01/agrp/shieldse/storage/ML/trackingData/transformed_data/module_map/{map_name}.csv'
-    df.to_csv(new_mm_path, sep=" ", index=False, header=False)
+    #df['pair_a'] = list(pairs.index(p) for p in zip(df['module1'], df['module2']))
+    #df['pair_b'] = list(pairs.index(p) for p in zip(df['module2'], df['module3']))
+
     
-    # df_pairs = pd.DataFrame(module_pairs_mapped)
-    # mm_pairs_path = f'/srv01/agrp/shieldse/storage/ML/trackingData/transformed_data/module_map/{map_name}_pairs.csv'
-    # df_pairs.to_csv(mm_pairs_path, sep=" ", index=False, header=False)
-    # print('transoformation done!')
+    df_pairs = pd.DataFrame(module_pairs_mapped)
+
+    mm_pairs_path = f'/srv01/agrp/shieldse/storage/ml/trackingData/transformed_data/module_map/{map_name}_pairs.csv'
+    df_pairs.to_csv(mm_pairs_path, sep=" ", index=False, header=False)
+    print('transoformation done!')
 
     # validation
     '''
