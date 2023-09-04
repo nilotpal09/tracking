@@ -15,20 +15,6 @@
 
 
 
-__global__ void kernel_tmp(
-    unsigned int *inp,
-    unsigned int offset
-    ) {
-
-    unsigned int tid = offset + blockDim.x * blockIdx.x + threadIdx.x;
-
-    inp[tid] = tid;
-}
-
-
-
-
-
 int main(int argc, char *argv[]){
 
     // argc, argv
@@ -124,51 +110,51 @@ int main(int argc, char *argv[]){
     unsigned int* d_dst = thrust::raw_pointer_cast(td_dst.data());
 
 
-    // // without stream (inefficient)
-    // launch_kernel_make_edges(
-    //     mm.d_flatten_triplets, mm.d_flatten_t2d_links, d_edge_count, d_input_hits, d_input_hits_chunk_idx, d_src, d_dst, n_triplets,
-    //     grid_size, block_size);
+    // without stream (inefficient)
+    launch_kernel_make_edges(
+        mm.d_flatten_triplets, mm.d_flatten_t2d_links, d_edge_count, d_input_hits, d_input_hits_chunk_idx, d_src, d_dst, n_triplets,
+        grid_size, block_size);
 
 
 
-    // with stream
-    unsigned int n_stream_max = 100000;
+    // // with stream
+    // unsigned int n_stream_max = 100000;
 
-    cudaStream_t stream[n_stream_max];
-    unsigned int shared_mem_size = 0;
-    unsigned int max_grid_size  = 1000;
-    unsigned int max_block_size = 1000;
+    // cudaStream_t stream[n_stream_max];
+    // unsigned int shared_mem_size = 0;
+    // unsigned int max_grid_size  = 1000;
+    // unsigned int max_block_size = 1000;
 
-    unsigned long int offset = 0; // needed for defining the thread_id (ONLY)
-    int stream_i = 0;
+    // unsigned long int offset = 0; // needed for defining the thread_id (ONLY)
+    // int stream_i = 0;
 
 
-    for (int i=0; i<n_stream_max; i++){
+    // for (int i=0; i<n_stream_max; i++){
 
-        if (td_iter_count[i] == 0){
-            continue;
-        }
+    //     if (td_iter_count[i] == 0){
+    //         continue;
+    //     }
 
-        cudaStreamCreate(&stream[i]);
+    //     cudaStreamCreate(&stream[i]);
 
-        grid_size  = std::min(max_grid_size, (unsigned int)td_iter_count[i]);
-        if (td_iter_count[i] % grid_size){
-            block_size = std::min((unsigned int)td_iter_count[i]/grid_size, max_block_size);
-        } else {
-            block_size = std::min((unsigned int)td_iter_count[i]/grid_size + 1, max_block_size);            
-        }
+    //     grid_size  = std::min(max_grid_size, (unsigned int)td_iter_count[i]);
+    //     if (td_iter_count[i] % grid_size){
+    //         block_size = std::min((unsigned int)td_iter_count[i]/grid_size, max_block_size);
+    //     } else {
+    //         block_size = std::min((unsigned int)td_iter_count[i]/grid_size + 1, max_block_size);            
+    //     }
 
-        launch_kernel_make_edges(
-            mm.d_flatten_triplets, mm.d_flatten_t2d_links, d_edge_count, d_input_hits, d_input_hits_chunk_idx, d_src, d_dst, i, offset,
-            grid_size, block_size, shared_mem_size, stream[stream_i]);
+    //     launch_kernel_make_edges(
+    //         mm.d_flatten_triplets, mm.d_flatten_t2d_links, d_edge_count, d_input_hits, d_input_hits_chunk_idx, d_src, d_dst, i, offset,
+    //         grid_size, block_size, shared_mem_size, stream[stream_i]);
         
-        offset += (unsigned long int)td_iter_count[i];
-        stream_i++;
+    //     offset += (unsigned long int)td_iter_count[i];
+    //     stream_i++;
 
-        // break;
-    }
+    //     // break;
+    // }
 
-    std::cout << "# streams:" << stream_i << std::endl;
+    // std::cout << "# streams:" << stream_i << std::endl;
 
     // for (int i=0; i<stream_i; i++){
     //     cudaStreamDestroy(stream[i]);
