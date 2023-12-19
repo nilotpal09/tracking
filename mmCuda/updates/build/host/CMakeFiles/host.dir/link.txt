@@ -1,0 +1,2 @@
+/usr/bin/ar qc libhost.a CMakeFiles/host.dir/src/event_reader.cu.o CMakeFiles/host.dir/src/memory_scheduler.cu.o CMakeFiles/host.dir/src/module_map_reader.cu.o
+/usr/bin/ranlib libhost.a

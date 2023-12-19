@@ -1,0 +1,2 @@
+/usr/bin/ar qc libdevice.a CMakeFiles/device.dir/src/doublet_finder.cu.o CMakeFiles/device.dir/src/selection.cu.o CMakeFiles/device.dir/src/triplet_finder.cu.o
+/usr/bin/ranlib libdevice.a

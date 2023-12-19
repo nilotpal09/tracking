@@ -1,0 +1,1 @@
+/usr/local/cuda/bin/nvcc -forward-unknown-to-host-compiler  -rdc=true -DTHRUST_IGNORE_DEPRECATED_CPP_DIALECT -DCUB_IGNORE_DEPRECATED_CPP_DIALECT -Xcompiler=-fPIC -Wno-deprecated-gpu-targets -shared -dlink --options-file CMakeFiles/GraphBuilder.dir/deviceObjects1.rsp -o CMakeFiles/GraphBuilder.dir/cmake_device_link.o --options-file CMakeFiles/GraphBuilder.dir/deviceLinkLibs.rsp

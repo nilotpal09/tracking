@@ -1,6 +1,6 @@
 #!/ bin / bash
 
-ROOT=/srv01/agrp/shieldse/ML/tracking/mmCuda #${PWD}
+ROOT=/srv01/agrp/nilotpal/projects/tracking/mmCuda #${PWD}
 BIN=${ROOT}/bin
 #if [[ !-d ${BIN} ]] 
 #then 

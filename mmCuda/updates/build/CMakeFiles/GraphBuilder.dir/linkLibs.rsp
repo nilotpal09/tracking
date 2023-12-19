@@ -1,0 +1,1 @@
+ host/libhost.a device/libdevice.a common/libcommon.a -lcudadevrt -lcudart_static -lrt -lpthread -ldl 
